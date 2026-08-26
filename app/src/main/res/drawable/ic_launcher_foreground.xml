@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Background Glow for the "Magic" tip -->
+    <path
+        android:fillColor="#43A047"
+        android:fillAlpha="0.15"
+        android:pathData="M70,38m-18,0a18,18 0,1 1,36 0a18,18 0,1 1,-36 0" />
+
+    <!-- The Wand -->
+    <path
+        android:fillColor="#00897B"
+        android:pathData="M32,82l-4,-4l42,-42l4,4z" />
+
+    <!-- Wand Tip Highlight -->
+    <path
+        android:fillColor="#43A047"
+        android:pathData="M68,36l4,4l4,-4l-4,-4z" />
+
+    <!-- The "Magic" Coin/Insight Symbol (Stylized Circle with Inner Detail) -->
+    <path
+        android:fillColor="#43A047"
+        android:pathData="M70,38m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0" />
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M70,33v10M65,38h10" /> <!-- Stylized internal cross/spark -->
+
+    <!-- Sparkles -->
+    <path
+        android:fillColor="#558B2F"
+        android:pathData="M55,25l1,2l2,1l-2,1l-1,2l-1,-2l-2,-1l2,-1z" />
+    <path
+        android:fillColor="#43A047"
+        android:pathData="M85,45l1,2l2,1l-2,1l-1,2l-1,-2l-2,-1l2,-1z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M75,20l0.5,1l1,0.5l-1,0.5l-0.5,1l-0.5,-1l-1,-0.5l1,-0.5z" />
+
+</vector>

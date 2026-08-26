@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@ai-sdk/cerebras": "^3.0.34"
+  }
+}

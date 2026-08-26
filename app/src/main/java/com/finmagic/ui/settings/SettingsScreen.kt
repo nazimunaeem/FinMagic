@@ -1,0 +1,578 @@
+package com.finmagic.ui.settings
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sms
+import androidx.compose.material.icons.filled.EventNote
+import androidx.compose.material.icons.filled.Label
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import com.finmagic.data.sms.parsers.TxnCategory
+import androidx.core.content.FileProvider
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.finmagic.ui.theme.StatusSafe
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(
+    viewModel: SettingsViewModel = hiltViewModel(),
+    onNavigateToDebug: () -> Unit = {},
+    onNavigateToCategories: () -> Unit = {},
+    onNavigateToSmsReview: () -> Unit = {}
+) {
+    val notificationsEnabled by viewModel.notificationsEnabled.collectAsStateWithLifecycle()
+    val alertRules by viewModel.alertRules.collectAsStateWithLifecycle()
+    val alertTime by viewModel.alertTime.collectAsStateWithLifecycle()
+    val exportState by viewModel.exportState.collectAsStateWithLifecycle()
+    val largeDebitAlerts by viewModel.largeDebitAlerts.collectAsStateWithLifecycle()
+    val largeDebitThreshold by viewModel.largeDebitThreshold.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    var hasSmsPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasSmsPermission = isGranted
+        if (isGranted) viewModel.triggerRescan()
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Settings", fontWeight = FontWeight.Bold) },
+                windowInsets = WindowInsets(0, 0, 0, 0)
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp)
+        ) {
+            // Group 1: Permissions & Scanning
+            SettingsGroup(title = "Permissions & Scanning") {
+                SettingsItem(
+                    icon = Icons.Default.Sms,
+                    title = "SMS Permission",
+                    description = if (hasSmsPermission) "Permission granted" else "Required to detect transactions and bills",
+                    trailing = {
+                        if (!hasSmsPermission) {
+                            TextButton(onClick = { permissionLauncher.launch(Manifest.permission.READ_SMS) }) {
+                                Text("Grant")
+                            }
+                        } else {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = StatusSafe)
+                        }
+                    }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+
+                SettingsItem(
+                    icon = Icons.Default.Refresh,
+                    title = "Rescan SMS Inbox",
+                    description = "Search entire inbox for missed transactions and bills",
+                    onClick = {
+                        if (hasSmsPermission) viewModel.triggerRescan()
+                        else permissionLauncher.launch(Manifest.permission.READ_SMS)
+                    }
+                )
+            }
+
+            // Group 2: Notifications & Alerts
+            SettingsGroup(title = "Notifications & Alerts") {
+                SettingsItem(
+                    icon = Icons.Default.Notifications,
+                    title = "Due Date Notifications",
+                    description = "Get alerts for upcoming bills",
+                    trailing = {
+                        Switch(
+                            checked = notificationsEnabled,
+                            onCheckedChange = { viewModel.toggleNotifications(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = StatusSafe
+                            )
+                        )
+                    }
+                )
+
+                if (notificationsEnabled) {
+                    HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+
+                    var showTimePicker by remember { mutableStateOf(false) }
+
+                    SettingsItem(
+                        icon = Icons.Default.AccessTime,
+                        title = "Alert Time",
+                        description = "Notify me daily at $alertTime",
+                        onClick = { showTimePicker = true },
+                        trailing = {
+                            Text(
+                                text = alertTime,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(end = 8.dp)
+                            )
+                        }
+                    )
+
+                    if (showTimePicker) {
+                        NotificationTimePickerDialog(
+                            initialTime = alertTime,
+                            onDismiss = { showTimePicker = false },
+                            onConfirm = { hour, minute ->
+                                viewModel.setAlertTime("%02d:%02d".format(hour, minute))
+                                showTimePicker = false
+                            }
+                        )
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+
+                    var showAlertRules by remember { mutableStateOf(false) }
+                    SettingsItem(
+                        icon = Icons.Default.EventNote,
+                        title = "Alert Rules",
+                        description = "${alertRules.size} active reminder rule${if (alertRules.size == 1) "" else "s"}",
+                        onClick = { showAlertRules = true },
+                        trailing = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                    )
+
+                    if (showAlertRules) {
+                        AlertRulesModal(
+                            activeRules = alertRules,
+                            onDismiss = { showAlertRules = false },
+                            onToggle = { viewModel.toggleAlertRule(it) }
+                        )
+                    }
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+
+                SettingsItem(
+                    icon = Icons.Default.Notifications,
+                    title = "Large Debit Alerts",
+                    description = "Notify on account debits over Tk %,.0f".format(largeDebitThreshold),
+                    trailing = {
+                        Switch(
+                            checked = largeDebitAlerts,
+                            onCheckedChange = { viewModel.toggleLargeDebitAlerts(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = StatusSafe
+                            )
+                        )
+                    }
+                )
+
+                if (largeDebitAlerts) {
+                    HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+
+                    var showThresholdDialog by remember { mutableStateOf(false) }
+                    SettingsItem(
+                        icon = Icons.Default.AccessTime,
+                        title = "Large Debit Threshold",
+                        description = "Alert threshold amount for account debits",
+                        onClick = { showThresholdDialog = true },
+                        trailing = {
+                            Text(
+                                text = "Tk %,.0f".format(largeDebitThreshold),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(end = 8.dp)
+                            )
+                        }
+                    )
+
+                    if (showThresholdDialog) {
+                        ThresholdDialog(
+                            initial = largeDebitThreshold,
+                            onDismiss = { showThresholdDialog = false },
+                            onConfirm = { value ->
+                                viewModel.setLargeDebitThreshold(value)
+                                showThresholdDialog = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Group: Categories
+            SettingsGroup(title = "Categories") {
+                SettingsItem(
+                    icon = Icons.Filled.Label,
+                    title = "Categories",
+                    description = "Manage cash-entry categories and display nicknames",
+                    onClick = onNavigateToCategories,
+                    trailing = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                )
+            }
+
+            // Group: SMS Recognition
+            SettingsGroup(title = "SMS Recognition") {
+                SettingsItem(
+                    icon = Icons.Default.Sms,
+                    title = "SMS Review",
+                    description = "Teach unparsed SMS and manage learned rules",
+                    onClick = onNavigateToSmsReview,
+                    trailing = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                )
+            }
+
+            // Group 3: Data & Export
+            SettingsGroup(title = "Data & Export") {
+                SettingsItem(
+                    icon = Icons.Default.Share,
+                    title = "Export All Data",
+                    description = "Save all bills and transaction history to a CSV file",
+                    onClick = { if (exportState !is ExportState.Loading) viewModel.exportData() },
+                    trailing = {
+                        if (exportState is ExportState.Loading) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                        }
+                    }
+                )
+
+                if (exportState is ExportState.Success) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(start = 56.dp, end = 16.dp, bottom = 12.dp)) {
+                        Button(
+                            onClick = {
+                                val file = (exportState as ExportState.Success).file
+                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/csv"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(shareIntent, "Export Bills"))
+                                viewModel.resetExportState()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Share CSV File")
+                        }
+                    }
+                }
+            }
+
+            // Group 4: Developer Options
+            SettingsGroup(title = "Developer Options") {
+                SettingsItem(
+                    icon = Icons.Default.BugReport,
+                    title = "Debug Tools",
+                    description = "View internal activity logs and raw SMS records",
+                    onClick = onNavigateToDebug,
+                    trailing = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                )
+            }
+
+            // App Info
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    "FinMagic v1.0.1",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "Nazim's Idea developed with AI",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ThresholdDialog(
+    initial: Double,
+    onDismiss: () -> Unit,
+    onConfirm: (Double) -> Unit
+) {
+    var text by remember { mutableStateOf("%.0f".format(initial)) }
+    val value = text.replace(",", "").toDoubleOrNull()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(enabled = value != null && value > 0, onClick = { onConfirm(value!!) }) {
+                Text("Confirm")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+        title = { Text("Large Debit Threshold") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                label = { Text("Amount (Tk)") },
+                singleLine = true
+            )
+        }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun NotificationTimePickerDialog(
+    initialTime: String,
+    onDismiss: () -> Unit,
+    onConfirm: (Int, Int) -> Unit
+) {
+    val initialHour = initialTime.substringBefore(":").toIntOrNull() ?: 9
+    val initialMinute = initialTime.substringAfter(":").toIntOrNull() ?: 0
+    val timePickerState = rememberTimePickerState(
+        initialHour = initialHour,
+        initialMinute = initialMinute,
+        is24Hour = true
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = { onConfirm(timePickerState.hour, timePickerState.minute) }) {
+                Text("Confirm")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+        title = { Text("Select Alert Time") },
+        text = {
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                TimePicker(state = timePickerState)
+            }
+        }
+    )
+}
+
+@Composable
+fun SettingsGroup(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(modifier = modifier) {
+        Text(
+            text = title.uppercase(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp),
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.sp
+        )
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Column(content = content)
+        }
+    }
+}
+
+@Composable
+fun AlertRuleItem(
+    rule: String,
+    label: String,
+    activeRules: Set<String>,
+    onToggle: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle(rule) }
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(
+            checked = activeRules.contains(rule),
+            onCheckedChange = { onToggle(rule) },
+            colors = CheckboxDefaults.colors(checkedColor = StatusSafe)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(text = label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+private val ALERT_RULE_OPTIONS = listOf(
+    "DAILY" to "Daily (all unpaid bills)",
+    "DUE_4_DAILY" to "4 days before: Daily",
+    "DUE_3_DAILY" to "3 days before: Daily",
+    "DUE_2_12H" to "2 days before: 12 hourly",
+    "DUE_2_6H" to "2 days before: 6 hourly",
+    "DUE_1_3H" to "1 day before: 3 hourly",
+    "DUE_1_1H" to "1 day before: Hourly"
+)
+
+private val DETECTED_CATEGORIES = listOf(
+    TxnCategory.ATM, TxnCategory.CASH_DEPOSIT, TxnCategory.INTEREST, TxnCategory.DPS,
+    TxnCategory.FUND_TRANSFER, TxnCategory.CARD_PAYMENT, TxnCategory.CASH_IN,
+    TxnCategory.PAYMENT, TxnCategory.RECEIVED, TxnCategory.BILL_PAY,
+    TxnCategory.NPSB, TxnCategory.CREDIT, TxnCategory.MANUAL, TxnCategory.ADJUSTMENT
+)
+
+@Composable
+fun AlertRulesModal(
+    activeRules: Set<String>,
+    onDismiss: () -> Unit,
+    onToggle: (String) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Alert Rules") },
+        text = {
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                items(ALERT_RULE_OPTIONS) { (rule, label) ->
+                    AlertRuleItem(
+                        rule = rule,
+                        label = label,
+                        activeRules = activeRules,
+                        onToggle = onToggle
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Done") }
+        }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CategoryNicknamesModal(
+    currentNicknames: Map<String, String>,
+    onDismiss: () -> Unit,
+    onSave: (Pair<String, String>) -> Unit
+) {
+    var drafts by remember(currentNicknames) {
+        mutableStateOf(DETECTED_CATEGORIES.associateWith { currentNicknames[it] ?: "" })
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Category Nicknames") },
+        text = {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(DETECTED_CATEGORIES) { category ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = category,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.width(104.dp)
+                        )
+                        OutlinedTextField(
+                            value = drafts[category] ?: "",
+                            onValueChange = { drafts = drafts + (category to it) },
+                            placeholder = { Text(category) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                drafts.forEach { (cat, nick) ->
+                    val trimmed = nick.trim()
+                    if (trimmed != (currentNicknames[cat] ?: "")) {
+                        onSave(cat to trimmed)
+                    }
+                }
+                onDismiss()
+            }) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+fun SettingsItem(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    onClick: (() -> Unit)? = null,
+    trailing: @Composable (() -> Unit)? = null
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
+            Text(text = description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (trailing != null) {
+            Box(modifier = Modifier.padding(start = 8.dp)) {
+                trailing()
+            }
+        }
+    }
+}
