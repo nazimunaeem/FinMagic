@@ -68,6 +68,10 @@ class AccountDetailViewModel @Inject constructor(
             _allAccounts.value = accountRepository.getAllAccountsOnce()
             refreshBalance()
         }
+        // Auto-refresh balance whenever transactions change
+        viewModelScope.launch {
+            transactions.collect { refreshBalance() }
+        }
     }
 
     private suspend fun refreshBalance() {
@@ -76,8 +80,8 @@ class AccountDetailViewModel @Inject constructor(
         if (acct.kind != Account.KIND_CASH && latest != null) {
             _balance.value = latest
         } else {
-            val txns = accountRepository.getTransactionsOnce(accountId)
-            _balance.value = AccountRepository.ledgerBalance(txns)
+            val txns = accountRepository.getAllTransactionsOnce(accountId)
+            _balance.value = AccountRepository.effectiveBalance(txns)
         }
     }
 

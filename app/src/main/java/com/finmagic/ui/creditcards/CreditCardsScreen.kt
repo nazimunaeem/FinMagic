@@ -782,14 +782,15 @@ private fun CardSummaryRowCard(
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = formatCurrencyMap(row.unpaidByCurrency),
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = if (row.overdueBillCount > 0) StatusOverdue else MaterialTheme.colorScheme.onSurface
+                    color = MaterialTheme.colorScheme.error
                 )
                 Text(
-                    text = if (row.overdueBillCount > 0) "${row.overdueBillCount} overdue" else "${row.unpaidBillCount} bill(s)",
+                    text = if (row.overdueBillCount > 0) "${row.overdueBillCount} overdue" else "${row.unpaidBillCount} unpaid",
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (row.overdueBillCount > 0) StatusOverdue else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Medium
                 )
             }
         }
@@ -1124,7 +1125,7 @@ private fun CreditCardTeachingCard(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Prime Bank  •  Pubali Bank  •  City Bank (Amex)\nBRAC Bank  •  EBL",
+                text = "Prime Bank  •  Pubali Bank  •  City Bank (Amex)\nBRAC Bank  •  Eastern Bank",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 18.sp
@@ -1196,7 +1197,7 @@ private fun SupportedBanksInfo() {
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Prime Bank • Pubali Bank • City Bank (Amex)\nBRAC Bank • EBL",
+            text = "Prime Bank • Pubali Bank • City Bank (Amex)\nBRAC Bank • EBL • Eastern Bank",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,

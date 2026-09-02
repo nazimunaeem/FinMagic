@@ -40,6 +40,10 @@ class AccountRepository @Inject constructor(
             txns.filterNot { it.category == "DirectSet" }
                 .sumOf { if (it.direction == AccountTransaction.DIRECTION_IN) it.amount else -it.amount }
 
+        /** Effective/displayed balance INCLUDING the visible DirectSet override row. */
+        fun effectiveBalance(txns: List<AccountTransaction>): Double =
+            txns.sumOf { if (it.direction == AccountTransaction.DIRECTION_IN) it.amount else -it.amount }
+
         fun calculateAdjustmentDelta(targetBalance: Double, txns: List<AccountTransaction>): Double =
             targetBalance - ledgerBalance(txns)
     }
@@ -684,6 +688,10 @@ class AccountRepository @Inject constructor(
     suspend fun getTransactionsOnce(accountId: Long): List<AccountTransaction> =
         txnDao.getByAccountOnce(accountId)
 
+    /** Gets ALL rows including DirectSet override entries. */
+    suspend fun getAllTransactionsOnce(accountId: Long): List<AccountTransaction> =
+        txnDao.getAllByAccountOnce(accountId)
+
     suspend fun getAllAccountsOnce(): List<Account> = accountDao.getAllOnce()
 
     suspend fun getAccountOnce(accountId: Long): Account? = accountDao.findByIdOnce(accountId)
@@ -748,20 +756,19 @@ class AccountRepository @Inject constructor(
             // Compute natural balance (without the direct-set)
             val txns = txnDao.getByAccountOnce(targetId)
             val diff = calculateAdjustmentDelta(targetBalance, txns)
-            if (kotlin.math.abs(diff) >= 0.01) {
-                val direction = if (diff > 0) AccountTransaction.DIRECTION_IN else AccountTransaction.DIRECTION_OUT
-                txnDao.insert(
-                    AccountTransaction(
-                        accountId = targetId,
-                        direction = direction,
-                        amount = kotlin.math.abs(diff),
-                        occurredAt = System.currentTimeMillis(),
-                        category = "DirectSet",
-                        counterparty = "Balance Set",
-                        isManual = true
-                    )
+            // Always create a DirectSet entry, even if diff is small
+            val direction = if (diff >= 0) AccountTransaction.DIRECTION_IN else AccountTransaction.DIRECTION_OUT
+            txnDao.insert(
+                AccountTransaction(
+                    accountId = targetId,
+                    direction = direction,
+                    amount = kotlin.math.abs(diff),
+                    occurredAt = System.currentTimeMillis(),
+                    category = "DirectSet",
+                    counterparty = "Balance Set",
+                    isManual = true
                 )
-            }
+            )
         }
         return true
     }

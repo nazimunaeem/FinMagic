@@ -175,6 +175,9 @@ fun MainApp() {
             composable(Screen.Home.route) {
                 HomeScreen(
                     onAccountClick = { accountId ->
+                        navController.navigate(Screen.Accounts.route) {
+                            launchSingleTop = true
+                        }
                         navController.navigate("accounts/$accountId")
                     },
                     onCardClick = { cardId ->
@@ -204,9 +207,10 @@ fun MainApp() {
             ) {
                 CardDetailScreen(onBack = { navController.popBackStack() })
             }
-            composable(Screen.Accounts.route) {
+            composable(Screen.Accounts.route) { backStackEntry ->
+                val initialTab = backStackEntry.arguments?.getInt("initialTab") ?: accountsInitialTab
                 AccountsScreen(
-                    initialTab = accountsInitialTab,
+                    initialTab = initialTab,
                     onTabSelected = { accountsInitialTab = it },
                     onAccountClick = { accountId ->
                         navController.navigate("accounts/$accountId")

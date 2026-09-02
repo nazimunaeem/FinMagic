@@ -959,10 +959,6 @@ internal fun AccountCard(
 ) {
     val account = summary.account
     val balance = summary.displayBalance
-    val net = summary.monthIn - summary.monthOut
-    val divergence = account.kind != Account.KIND_CASH &&
-        summary.latestBalance != null &&
-        kotlin.math.abs(summary.latestBalance - summary.computedBalance) > 0.01
 
     val kindLabel = when (account.kind) {
         Account.KIND_CASH -> "Cash"
@@ -971,125 +967,38 @@ internal fun AccountCard(
         else -> "Account"
     }
 
-    val netColor = when {
-        net > 0.005 -> StatusSafe
-        net < -0.005 -> MaterialTheme.colorScheme.error
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-
     Card(
         modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
-                modifier = Modifier.size(42.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    Icon(
-                        imageVector = accountIcon(account.kind),
-                        contentDescription = account.kind,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = account.displayName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
-                    ) {
-                        Text(
-                            text = kindLabel,
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-
-                if (account.kind != Account.KIND_CASH && !account.displayName.contains(account.accountMask)) {
-                    Text(
-                        text = "•• ${account.accountMask}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(top = 6.dp)
-                ) {
-                    Text(
-                        text = when {
-                            net > 0.005 -> "+Tk ${String.format(Locale.US, "%,.0f", net)} this month"
-                            net < -0.005 -> "−Tk ${String.format(Locale.US, "%,.0f", kotlin.math.abs(net))} this month"
-                            else -> "No monthly change"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = netColor,
-                        fontWeight = FontWeight.Medium
-                    )
-                    if (account.includeInTotal) {
-                        Text(
-                            text = "Included",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = StatusSafe,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-
-                if (divergence) {
-                    Text(
-                        text = "Bank Tk ${String.format(Locale.US, "%,.2f", summary.latestBalance)} · " +
-                            "Ledger Tk ${String.format(Locale.US, "%,.2f", summary.computedBalance)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.tertiary,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
-                }
-            }
-            Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text = String.format(Locale.US, "Tk %,.2f", balance),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = StatusSafe
+                    text = account.displayName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
-                Text(
-                    text = when {
-                        net > 0.005 -> "Income"
-                        net < -0.005 -> "Spend"
-                        else -> "Stable"
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = netColor,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(top = 2.dp)
+                AssistChip(
+                    onClick = {},
+                    label = { Text(kindLabel, style = MaterialTheme.typography.labelSmall) },
+                    modifier = Modifier.padding(top = 4.dp)
                 )
             }
+            Text(
+                text = String.format(Locale.US, "Tk %,.0f", balance),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
         }
     }
 }

@@ -166,7 +166,7 @@ interface AccountTransactionDao {
                 ORDER BY t.occurredAt DESC, t.id DESC LIMIT 1) AS latestBalance,
                COALESCE((SELECT SUM(CASE WHEN direction = 'IN' THEN amount ELSE -amount END)
                 FROM account_transactions t WHERE t.accountId = a.id
-                  AND t.category != 'DirectSet'), 0) AS computedBalance,
+                  ), 0) AS computedBalance,
                COALESCE((SELECT SUM(CASE WHEN direction = 'IN' THEN amount ELSE 0 END)
                 FROM account_transactions t
                 WHERE t.accountId = a.id AND t.occurredAt >= :monthStart
