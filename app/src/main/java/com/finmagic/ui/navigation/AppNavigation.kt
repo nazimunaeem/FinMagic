@@ -1,24 +1,8 @@
 package com.finmagic.ui.navigation
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountBalance
-import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.CreditCard
-import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Label
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.ShoppingCart
-import androidx.compose.material.icons.filled.Sms
-import androidx.compose.material.icons.outlined.AccountBalance
-import androidx.compose.material.icons.outlined.BugReport
-import androidx.compose.material.icons.outlined.CreditCard
-import androidx.compose.material.icons.outlined.Dashboard
-import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Label
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.ShoppingCart
-import androidx.compose.material.icons.outlined.Sms
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.ui.graphics.vector.ImageVector
 
 sealed class Screen(
@@ -27,6 +11,13 @@ sealed class Screen(
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector
 ) {
+    data object Home : Screen(
+        route = "home",
+        title = "Home",
+        selectedIcon = Icons.Filled.Home,
+        unselectedIcon = Icons.Outlined.Home
+    )
+
     data object CreditCards : Screen(
         route = "credit_cards",
         title = "Credit Cards",
@@ -69,17 +60,18 @@ sealed class Screen(
         unselectedIcon = Icons.Outlined.Sms
     )
 
-    data object Debug : Screen(
-        route = "debug",
-        title = "Debug",
-        selectedIcon = Icons.Filled.BugReport,
-        unselectedIcon = Icons.Outlined.BugReport
+    data object Stats : Screen(
+        route = "stats",
+        title = "Stats",
+        selectedIcon = Icons.Filled.Dashboard,
+        unselectedIcon = Icons.Outlined.Dashboard
     )
+
 }
 
 val bottomNavScreens = listOf(
-    Screen.Accounts,
-    Screen.CreditCards,
+    Screen.Home,
     Screen.Expenses,
+    Screen.Stats,
     Screen.Settings
 )

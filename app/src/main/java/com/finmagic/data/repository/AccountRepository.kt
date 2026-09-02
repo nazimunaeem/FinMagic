@@ -32,6 +32,18 @@ class AccountRepository @Inject constructor(
     private val simResolver: com.finmagic.data.sms.SimAccountResolver
 ) {
 
+    companion object {
+        /** Natural, visible ledger balance used for account math. Direct-set overrides are hidden
+         * and should not be treated as real ledger entries when calculating the current balance.
+         */
+        fun ledgerBalance(txns: List<AccountTransaction>): Double =
+            txns.filterNot { it.category == "DirectSet" }
+                .sumOf { if (it.direction == AccountTransaction.DIRECTION_IN) it.amount else -it.amount }
+
+        fun calculateAdjustmentDelta(targetBalance: Double, txns: List<AccountTransaction>): Double =
+            targetBalance - ledgerBalance(txns)
+    }
+
     // ---------------------------------------------------------------- accounts
 
     suspend fun ensureCashAccount(): Account {
@@ -112,13 +124,17 @@ class AccountRepository @Inject constructor(
         smsBody: String,
         smsRecordId: Long?
     ): Boolean = when (classification) {
-        is SmsClassification.AtmWithdraw -> storeAtmWithdraw(classification.entry, smsBody, smsRecordId)
-        is SmsClassification.WalletToCash -> storeTransferPair(classification.from, classification.to, smsBody, smsRecordId)
+        is SmsClassification.AtmWithdraw -> storeAtmWithdraw(classification.entry, smsBody, smsRecordId) != null
+        is SmsClassification.WalletToCash -> storeTransferPair(classification.from, classification.to, smsBody, smsRecordId) != null
         is SmsClassification.AcctTxn -> storeSingle(classification.entry, smsBody, smsRecordId)
         is SmsClassification.WalletTxn -> storeSingle(classification.entry, smsBody, smsRecordId)
         else -> false
     }
 
+    /**
+     * Stores a manual/taught transaction. Returns the new transaction row id when
+     * a row was written (i.e. not a duplicate, amount valid); otherwise null.
+     */
     suspend fun storeManualToAccount(
         accountId: Long,
         direction: String,
@@ -127,16 +143,18 @@ class AccountRepository @Inject constructor(
         category: String,
         counterparty: String?,
         smsBody: String,
-        smsRecordId: Long?
-    ): Boolean {
-        if (amount <= 0.0 || txnDao.existsBySmsBody(smsBody)) return false
-        accountDao.findByIdOnce(accountId) ?: return false
-        database.withTransaction {
+        smsRecordId: Long?,
+        balanceAfter: Double? = null
+    ): Long? {
+        if (amount <= 0.0 || txnDao.existsBySmsBody(smsBody)) return null
+        accountDao.findByIdOnce(accountId) ?: return null
+        return database.withTransaction {
             txnDao.insert(
                 AccountTransaction(
                     accountId = accountId,
                     direction = direction,
                     amount = amount,
+                    balanceAfter = balanceAfter,
                     occurredAt = occurredAt,
                     category = category,
                     counterparty = counterparty,
@@ -146,7 +164,6 @@ class AccountRepository @Inject constructor(
                 )
             )
         }
-        return true
     }
 
     private suspend fun checkAndInsertGapAdjustment(accountId: Long, currentEntry: LedgerEntry) {
@@ -201,11 +218,11 @@ class AccountRepository @Inject constructor(
     }
 
     /** ATM withdrawal → OUT on the bank + IN on Cash + Transfer row (plan §5). */
-    suspend fun storeAtmWithdraw(entry: LedgerEntry, smsBody: String, smsRecordId: Long?): Boolean {
-        if (txnDao.existsBySmsBody(smsBody)) return false
-        val bank = resolveAccount(entry) ?: return false
+    suspend fun storeAtmWithdraw(entry: LedgerEntry, smsBody: String, smsRecordId: Long?): Long? {
+        if (txnDao.existsBySmsBody(smsBody)) return null
+        val bank = resolveAccount(entry) ?: return null
         val cash = ensureCashAccount()
-        database.withTransaction {
+        return database.withTransaction {
             val transferId = transferDao.insert(
                 Transfer(
                     fromAccountId = bank.id,
@@ -215,10 +232,10 @@ class AccountRepository @Inject constructor(
                 )
             )
             checkAndInsertGapAdjustment(bank.id, entry)
-            txnDao.insert(entry.toEntity(bank.id, smsRecordId, smsBody, transferId))
+            val bankTxnId = txnDao.insert(entry.toEntity(bank.id, smsRecordId, smsBody, transferId))
             txnDao.insert(cashInEntry(entry, cash.id, "${bank.displayName} ATM", transferId))
+            bankTxnId
         }
-        return true
     }
 
     /** Generic two-account movement (bank→wallet funding, wallet→cash out). */
@@ -227,16 +244,16 @@ class AccountRepository @Inject constructor(
         to: LedgerEntry,
         smsBody: String,
         smsRecordId: Long?
-    ): Boolean {
-        if (txnDao.existsBySmsBody(smsBody)) return false
-        val fromAccount = resolveAccount(from) ?: return false
+    ): Long? {
+        if (txnDao.existsBySmsBody(smsBody)) return null
+        val fromAccount = resolveAccount(from) ?: return null
         val toAccount = if (to.kind == com.finmagic.data.sms.parsers.AccountKind.CASH) {
             ensureCashAccount()
         } else {
-            resolveAccount(to) ?: return false
+            resolveAccount(to) ?: return null
         }
-        if (fromAccount.id == toAccount.id) return false
-        database.withTransaction {
+        if (fromAccount.id == toAccount.id) return null
+        return database.withTransaction {
             val occurredAt = from.occurredAt ?: System.currentTimeMillis()
             val transferId = transferDao.insert(
                 Transfer(
@@ -247,11 +264,11 @@ class AccountRepository @Inject constructor(
                 )
             )
             checkAndInsertGapAdjustment(fromAccount.id, from)
-            txnDao.insert(from.toEntity(fromAccount.id, smsRecordId, smsBody, transferId))
+            val outTxnId = txnDao.insert(from.toEntity(fromAccount.id, smsRecordId, smsBody, transferId))
             checkAndInsertGapAdjustment(toAccount.id, to)
             txnDao.insert(to.toEntity(toAccount.id, smsRecordId, smsBody, transferId))
+            outTxnId
         }
-        return true
     }
 
     private fun cashInEntry(
@@ -294,6 +311,23 @@ class AccountRepository @Inject constructor(
     )
 
     // ----------------------------------------------------------- manual entries
+
+    /** Removes any transaction(s) previously created from the same parsed SMS record, including
+     * transfer mirrors and their transfer links, so re-teaching replaces the original entry.
+     */
+    suspend fun replaceParsedSmsEntries(smsRecordId: Long) {
+        val existing = txnDao.getBySmsRecordIdOnce(smsRecordId)
+        if (existing.isEmpty()) return
+
+        val transferIds = existing.mapNotNull { it.transferId }.distinct()
+        database.withTransaction {
+            transferIds.forEach { transferId ->
+                txnDao.deleteByTransferId(transferId)
+                transferDao.deleteById(transferId)
+            }
+            txnDao.deleteBySmsRecordId(smsRecordId)
+        }
+    }
 
     /** Manual cash expense/income row (plan §5). */
     suspend fun addManualCashEntry(
@@ -366,6 +400,18 @@ class AccountRepository @Inject constructor(
                     isManual = true
                 )
             )
+        }
+        return true
+    }
+
+    suspend fun deleteEntry(txnId: Long): Boolean {
+        val txn = txnDao.findByIdOnce(txnId) ?: return false
+        database.withTransaction {
+            txn.transferId?.let { transferId ->
+                txnDao.getByTransferIdOnce(transferId).forEach { txnDao.deleteById(it.id) }
+                transferDao.deleteById(transferId)
+            }
+            txnDao.deleteById(txnId)
         }
         return true
     }
@@ -496,7 +542,8 @@ class AccountRepository @Inject constructor(
         amount: Double,
         accountId: Long,
         category: String?,
-        counterparty: String?
+        counterparty: String?,
+        balanceAfter: Double? = null
     ): Boolean {
         if (amount <= 0.0) return false
         val txn = txnDao.findByIdOnce(txnId) ?: return false
@@ -505,6 +552,7 @@ class AccountRepository @Inject constructor(
         database.withTransaction {
             val sameAccount = txn.accountId == accountId
             val sameDirection = txn.direction == direction
+            val effectiveBalance = balanceAfter ?: txn.balanceAfter
 
             if (sameAccount && sameDirection) {
                 // Simple update — no account or direction change.
@@ -514,6 +562,9 @@ class AccountRepository @Inject constructor(
                     category?.ifBlank { null },
                     amount
                 )
+                if (balanceAfter != null) {
+                    txnDao.updateBalanceAfter(txnId, balanceAfter)
+                }
             } else {
                 // Account or direction changed — remove old, insert new.
                 // Handle transfer mirrors if the original was part of a transfer.
@@ -529,7 +580,7 @@ class AccountRepository @Inject constructor(
                         direction = direction,
                         amount = amount,
                         currency = txn.currency,
-                        balanceAfter = txn.balanceAfter,
+                        balanceAfter = effectiveBalance,
                         occurredAt = txn.occurredAt,
                         category = category?.ifBlank { null } ?: txn.category,
                         counterparty = counterparty?.ifBlank { null } ?: txn.counterparty,
@@ -544,21 +595,33 @@ class AccountRepository @Inject constructor(
         return true
     }
 
-    /** Adjusts current Cash balance to the target amount by inserting a balance adjustment entry. */
-    suspend fun adjustCashBalance(targetBalance: Double): Boolean {
-        val cash = ensureCashAccount()
+    /**
+     * Reverses and removes an incorrectly parsed SMS transaction (plan §2.2).
+     */
+    suspend fun ignoreParsedTransaction(txnId: Long): Boolean {
+        val txn = txnDao.findByIdOnce(txnId) ?: return false
         database.withTransaction {
-            val txns = txnDao.getAllByAccountOnce(cash.id)
-            val currentBalance = txns.sumOf {
-                if (it.direction == AccountTransaction.DIRECTION_IN) it.amount else -it.amount
+            txn.transferId?.let { transferId ->
+                txnDao.deleteTransferMirror(transferId, txn.accountId)
+                transferDao.deleteById(transferId)
             }
-            val diff = targetBalance - currentBalance
+            txnDao.deleteById(txnId)
+        }
+        return true
+    }
+
+    /** Adjusts the balance of the given account (or Cash if null) to the target amount. */
+    suspend fun adjustCashBalance(targetBalance: Double, accountId: Long? = null): Boolean {
+        val targetId = accountId ?: ensureCashAccount().id
+        database.withTransaction {
+            val txns = txnDao.getByAccountOnce(targetId)
+            val diff = calculateAdjustmentDelta(targetBalance, txns)
             if (kotlin.math.abs(diff) >= 0.01) {
                 val direction = if (diff > 0) AccountTransaction.DIRECTION_IN else AccountTransaction.DIRECTION_OUT
                 val amount = kotlin.math.abs(diff)
                 txnDao.insert(
                     AccountTransaction(
-                        accountId = cash.id,
+                        accountId = targetId,
                         direction = direction,
                         amount = amount,
                         occurredAt = System.currentTimeMillis(),
@@ -584,7 +647,8 @@ class AccountRepository @Inject constructor(
                         latestBalance = row.latestBalance,
                         computedBalance = row.computedBalance,
                         monthIn = row.monthIn,
-                        monthOut = row.monthOut
+                        monthOut = row.monthOut,
+                        lastActivity = row.lastActivity
                     )
                 }
             }
@@ -602,6 +666,20 @@ class AccountRepository @Inject constructor(
     /** Monthly expense totals per category across all accounts (plan Phase 5). */
     fun observeMonthlyExpenseByCategory(monthStart: Long): Flow<List<com.finmagic.data.local.dao.CategoryTotal>> =
         txnDao.observeMonthlyExpenseByCategory(monthStart)
+
+    /** Monthly income totals per category across all accounts. */
+    fun observeMonthlyIncomeByCategory(monthStart: Long): Flow<List<com.finmagic.data.local.dao.CategoryTotal>> =
+        txnDao.observeMonthlyIncomeByCategory(monthStart)
+
+    /** Soft-deleted (archived) accounts that can still be restored by the user. */
+    fun observeArchived(): Flow<List<Account>> = accountDao.observeArchived()
+
+    /** Brings an archived account back into the active list. */
+    suspend fun restoreAccount(accountId: Long): Boolean {
+        accountDao.findByIdOnce(accountId) ?: return false
+        accountDao.setArchived(accountId, false)
+        return true
+    }
 
     suspend fun getTransactionsOnce(accountId: Long): List<AccountTransaction> =
         txnDao.getByAccountOnce(accountId)
@@ -669,10 +747,7 @@ class AccountRepository @Inject constructor(
             txnDao.deleteDirectSetEntries(targetId)
             // Compute natural balance (without the direct-set)
             val txns = txnDao.getByAccountOnce(targetId)
-            val naturalBalance = txns.sumOf {
-                if (it.direction == AccountTransaction.DIRECTION_IN) it.amount else -it.amount
-            }
-            val diff = targetBalance - naturalBalance
+            val diff = calculateAdjustmentDelta(targetBalance, txns)
             if (kotlin.math.abs(diff) >= 0.01) {
                 val direction = if (diff > 0) AccountTransaction.DIRECTION_IN else AccountTransaction.DIRECTION_OUT
                 txnDao.insert(

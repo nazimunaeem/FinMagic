@@ -524,6 +524,11 @@ class FakeCardPaymentDao : CardPaymentDao {
         }
     }
 
+    override suspend fun deleteBySmsBody(smsBody: String) {
+        payments.removeAll { it.smsBody == smsBody }
+    }
+
+
     override suspend fun countOnce(): Int = payments.size
 
     override suspend fun deleteOld(beforeTimestamp: Long) {

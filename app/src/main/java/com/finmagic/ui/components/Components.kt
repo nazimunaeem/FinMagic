@@ -1,11 +1,14 @@
 package com.finmagic.ui.components
 
+import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,10 +26,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -39,6 +46,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,6 +78,7 @@ fun BillCard(
 ) {
     var showPaymentDialog by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
+    var showPaySheet by remember { mutableStateOf(false) }
 
     val statusColor = when (bill.dueStatus) {
         DueStatus.PAID -> StatusPaid
@@ -235,6 +246,29 @@ fun BillCard(
                 }
             }
 
+            if (!bill.isPaid && bill.dueStatus == DueStatus.OVERDUE) {
+                Spacer(modifier = Modifier.height(4.dp))
+                val symbol = when (bill.currency.uppercase()) {
+                    "USD" -> "$"
+                    else -> "৳"
+                }
+                val monthlyFee = bill.totalDue * 0.025
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = StatusOverdue,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "≈ $symbol${String.format(java.util.Locale.US, "%,.0f", monthlyFee)}/month late fee estimate",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = StatusOverdue
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(4.dp))
 
             Row(
@@ -244,6 +278,16 @@ fun BillCard(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (!bill.isPaid) {
+                        TextButton(
+                            onClick = { showPaySheet = true },
+                            contentPadding = PaddingValues(0.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Icon(Icons.Default.Payments, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Pay", style = MaterialTheme.typography.labelSmall)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
                         TextButton(
                             onClick = { showPaymentDialog = true },
                             contentPadding = PaddingValues(0.dp),
@@ -323,6 +367,13 @@ fun BillCard(
             }
         )
     }
+
+    if (showPaySheet) {
+        BillPaySheet(
+            bill = bill,
+            onDismiss = { showPaySheet = false }
+        )
+    }
 }
 
 @Composable
@@ -344,7 +395,10 @@ fun EditBillDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit Bill") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 OutlinedTextField(
                     value = totalText,
                     onValueChange = { totalText = it },
@@ -415,7 +469,10 @@ fun PaymentAmountDialog(
         onDismissRequest = onDismiss,
         title = { Text("Update Paid Amount") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Text("Total: ${currency} $totalDue", style = MaterialTheme.typography.bodySmall)
                 Text("Minimum: ${currency} $minDue", style = MaterialTheme.typography.bodySmall)
                 Spacer(modifier = Modifier.height(8.dp))
@@ -492,6 +549,7 @@ fun SummaryCard(
     thisMonthMinTotal: String,
     prevMonthTotal: String,
     unpaidCount: Int,
+    unpaidCardCount: Int,
     overdueCount: Int,
     modifier: Modifier = Modifier
 ) {
@@ -556,7 +614,7 @@ fun SummaryCard(
             Spacer(modifier = Modifier.height(16.dp))
             Row {
                 Text(
-                    text = "$unpaidCount card(s) unpaid",
+                    text = "$unpaidCount bill(s) • $unpaidCardCount card(s) unpaid",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f)
                 )
@@ -655,5 +713,157 @@ fun SmsPermissionCard(
                 Text("Grant SMS Permission")
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BillPaySheet(
+    bill: BillWithCard,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val remaining = bill.totalDue - bill.paidAmount
+    val remainingMin = maxOf(0.0, bill.minDue - bill.paidAmount)
+    val symbol = when (bill.currency.uppercase()) {
+        "USD" -> "$"
+        "BDT", "TK" -> "৳"
+        else -> bill.currency
+    }
+    val masked = "•••• •••• •••• ${bill.cardLast4}"
+    val copyText = buildString {
+        appendLine("Credit Card Bill Payment")
+        appendLine("Card: ${bill.displayName}")
+        appendLine("Card No: $masked")
+        appendLine("Amount Due: $symbol${String.format(java.util.Locale.US, "%,.2f", bill.totalDue)}")
+        appendLine("Remaining: $symbol${String.format(java.util.Locale.US, "%,.2f", remaining)}")
+        appendLine("Min Due: $symbol${String.format(java.util.Locale.US, "%,.2f", remainingMin)}")
+        appendLine("Due Date: ${bill.formattedDueDate}")
+        if (!bill.smsBody.isNullOrBlank()) {
+            appendLine("")
+            appendLine("Statement SMS:")
+            appendLine(bill.smsBody)
+        }
+    }
+
+    fun share() {
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Credit card payment: ${bill.displayName}")
+            putExtra(Intent.EXTRA_TEXT, copyText)
+        }
+        context.startActivity(Intent.createChooser(sendIntent, "Pay via"))
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp)
+        ) {
+            Text(
+                text = "Pay ${bill.displayName}",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = masked,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    PaySheetRow("Amount Due", "$symbol${String.format(java.util.Locale.US, "%,.2f", bill.totalDue)}", isStrong = true)
+                    PaySheetRow("Minimum Due", "$symbol${String.format(java.util.Locale.US, "%,.2f", remainingMin)}")
+                    PaySheetRow("Due Date", bill.formattedDueDate)
+                    if (bill.paidAmount > 0) {
+                        PaySheetRow("Already Paid", "$symbol${String.format(java.util.Locale.US, "%,.2f", bill.paidAmount)}")
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Button(
+                onClick = {
+                    clipboard.setText(AnnotatedString(copyText))
+                    android.widget.Toast.makeText(context, "Payment details copied", android.widget.Toast.LENGTH_SHORT).show()
+                    onDismiss()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Copy Payment Details")
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            OutlinedButton(
+                onClick = {
+                    share()
+                    onDismiss()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Share to Payment App")
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Open bkash / Nagad / Rocket or your bank app, then paste or mirror the details.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+@Composable
+private fun PaySheetRow(
+    label: String,
+    value: String,
+    isStrong: Boolean = false
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = if (isStrong) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodySmall,
+            fontWeight = if (isStrong) FontWeight.Bold else FontWeight.Medium
+        )
     }
 }

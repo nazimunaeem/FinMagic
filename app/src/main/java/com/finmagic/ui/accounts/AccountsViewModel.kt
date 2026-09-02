@@ -11,23 +11,38 @@ import com.finmagic.data.local.entity.AccountTransaction
 import com.finmagic.data.local.PreferenceManager
 import com.finmagic.data.repository.AccountRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import javax.inject.Inject
 
+internal fun monthTrendPercent(current: Double, previous: Double): Double {
+    if (previous <= 0.0) return 0.0
+    return ((current - previous) / previous) * 100.0
+}
+
 data class AccountsUiState(
     val summaries: List<AccountSummary> = emptyList(),
     val monthIn: Double = 0.0,
     val monthOut: Double = 0.0,
+    val prevMonthIn: Double = 0.0,
+    val prevMonthOut: Double = 0.0,
     val totalBalance: Double = 0.0,
     val expensesByCategory: List<CategoryTotal> = emptyList(),
+    val incomeByCategory: List<CategoryTotal> = emptyList(),
+    val archivedAccounts: List<Account> = emptyList(),
     val recentTransactions: List<AccountTransactionWithAccount> = emptyList()
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class AccountsViewModel @Inject constructor(
     application: Application,
@@ -35,31 +50,65 @@ class AccountsViewModel @Inject constructor(
     private val preferenceManager: PreferenceManager
 ) : AndroidViewModel(application) {
 
-    private val monthStart: Long = Calendar.getInstance().apply {
-        set(Calendar.DAY_OF_MONTH, 1)
-        set(Calendar.HOUR_OF_DAY, 0)
-        set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-    }.timeInMillis
+    private val now = Calendar.getInstance()
+    private val _selectedYear = MutableStateFlow(now.get(Calendar.YEAR))
+    private val _selectedMonth = MutableStateFlow(now.get(Calendar.MONTH))
+
+    val selectedYear: StateFlow<Int> = _selectedYear.asStateFlow()
+    val selectedMonth: StateFlow<Int> = _selectedMonth.asStateFlow()
+
+    /** Millis at the start of the currently selected month (0-based month, always Jan 1 = day 1). */
+    private val monthStart: Flow<Long> =
+        combine(_selectedYear, _selectedMonth) { year, month -> startOfMonthMillis(year, month) }
 
     val uiState: StateFlow<AccountsUiState> =
-        combine(
-            accountRepository.observeSummaries(monthStart),
-            accountRepository.observeMonthlyExpenseByCategory(monthStart),
-            accountRepository.observeAllTransactionsWithAccount()
-        ) { summaries, expenses, transactions ->
-            val counted = summaries.filter { it.account.includeInTotal }
-            AccountsUiState(
-                summaries = summaries,
-                monthIn = counted.sumOf { it.monthIn },
-                monthOut = counted.sumOf { it.monthOut },
-                totalBalance = counted.sumOf { it.displayBalance },
-                expensesByCategory = expenses.filter { it.total > 0.0 },
-                recentTransactions = transactions
-            )
+        monthStart.flatMapLatest { ms ->
+            combine(
+                accountRepository.observeSummaries(ms),
+                accountRepository.observeMonthlyExpenseByCategory(ms),
+                accountRepository.observeMonthlyIncomeByCategory(ms),
+                accountRepository.observeArchived(),
+                accountRepository.observeAllTransactionsWithAccount()
+            ) { summaries, expenses, income, archived, transactions ->
+                val counted = summaries.filter { it.account.includeInTotal }
+                val currentMonthIn = counted.sumOf { it.monthIn }
+                val currentMonthOut = counted.sumOf { it.monthOut }
+
+                val prevCal = Calendar.getInstance().apply {
+                    timeInMillis = ms
+                    add(Calendar.MONTH, -1)
+                }
+                val prevStart = startOfMonthMillis(prevCal.get(Calendar.YEAR), prevCal.get(Calendar.MONTH))
+                val prevEnd = ms
+
+                val prevTransactions = transactions.filter { it.occurredAt >= prevStart && it.occurredAt < prevEnd }
+                val prevMonthIn = prevTransactions.filter { it.direction == AccountTransaction.DIRECTION_IN }.sumOf { it.amount }
+                val prevMonthOut = prevTransactions.filter { it.direction == AccountTransaction.DIRECTION_OUT }.sumOf { it.amount }
+
+                AccountsUiState(
+                    summaries = summaries,
+                    monthIn = currentMonthIn,
+                    monthOut = currentMonthOut,
+                    prevMonthIn = prevMonthIn,
+                    prevMonthOut = prevMonthOut,
+                    totalBalance = counted.sumOf { it.displayBalance },
+                    expensesByCategory = expenses.filter { it.total > 0.0 },
+                    incomeByCategory = income.filter { it.total > 0.0 },
+                    archivedAccounts = archived,
+                    recentTransactions = transactions
+                )
+            }
         }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AccountsUiState())
+
+    fun setSelectedMonth(year: Int, month: Int) {
+        _selectedYear.value = year
+        _selectedMonth.value = month
+    }
+
+    fun restoreAccount(accountId: Long) {
+        viewModelScope.launch { accountRepository.restoreAccount(accountId) }
+    }
 
     fun ensureCashAccount() {
         viewModelScope.launch { accountRepository.ensureCashAccount() }
@@ -114,7 +163,7 @@ class AccountsViewModel @Inject constructor(
 
     fun deleteTransaction(txnId: Long) {
         viewModelScope.launch {
-            accountRepository.deleteManualEntry(txnId)
+            accountRepository.deleteEntry(txnId)
         }
     }
 
@@ -145,4 +194,15 @@ class AccountsViewModel @Inject constructor(
     fun setCashBalanceDirect(targetBalance: Double) {
         viewModelScope.launch { accountRepository.setCashBalanceDirect(targetBalance) }
     }
+
+    private fun startOfMonthMillis(year: Int, month: Int): Long =
+        Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month)
+            set(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
 }

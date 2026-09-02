@@ -39,13 +39,13 @@ object SmsDateParser {
             return null
         }
 
-        val timeMatch = timePattern.find(body) ?: return dayMillis
-        val hour12 = timeMatch.groupValues[1].toIntOrNull() ?: return dayMillis
+        val timeMatch = timePattern.find(body) ?: return null
+        val hour12 = timeMatch.groupValues[1].toIntOrNull() ?: return null
         val minute = timeMatch.groupValues[2].toIntOrNull() ?: 0
         val second = timeMatch.groupValues[3].toIntOrNull() ?: 0
         val meridiem = timeMatch.groupValues[4].uppercase()
 
-        if (hour12 !in 1..12 || minute !in 0..59 || second !in 0..59) return dayMillis
+        if (hour12 !in 1..12 || minute !in 0..59 || second !in 0..59) return null
 
         val cal = Calendar.getInstance()
         cal.timeInMillis = dayMillis

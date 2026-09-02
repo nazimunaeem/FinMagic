@@ -48,6 +48,18 @@ class CardDetailViewModel @Inject constructor(
         .map { list -> list.filter { !it.isPaid && !it.isSuperseded }.sumOf { it.totalDue - it.paidAmount } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
+    val paidTotals: StateFlow<Map<String, Double>> = _bills
+        .map { list -> list.filter { it.isPaid }.groupingBy { it.currency }.fold(0.0) { acc, b -> acc + b.paidAmount } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    val unpaidTotals: StateFlow<Map<String, Double>> = _bills
+        .map { list ->
+            list.filter { !it.isPaid && !it.isSuperseded }
+                .groupingBy { it.currency }
+                .fold(0.0) { acc, b -> acc + (b.totalDue - b.paidAmount) }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
     val payments: StateFlow<List<CardPayment>> = combine(
         cardPaymentDao.observeAllPayments(),
         _card
@@ -74,6 +86,24 @@ class CardDetailViewModel @Inject constructor(
     fun updateNickname(card: CreditCard, nickname: String) {
         viewModelScope.launch {
             cardRepository.updateCard(card.copy(cardNickname = nickname.trim()))
+            _card.value = cardRepository.getCardById(cardId)
+        }
+    }
+
+    fun updateCardDetails(
+        card: CreditCard,
+        nickname: String,
+        creditLimit: Double,
+        currency: String
+    ) {
+        viewModelScope.launch {
+            cardRepository.updateCard(
+                card.copy(
+                    cardNickname = nickname.trim(),
+                    creditLimit = creditLimit,
+                    creditLimitCurrency = currency.ifBlank { "BDT" }
+                )
+            )
             _card.value = cardRepository.getCardById(cardId)
         }
     }

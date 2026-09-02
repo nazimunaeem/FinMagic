@@ -14,6 +14,8 @@ data class ExpenseRow(
     val amount: Double,
     val title: String,
     val category: String,
+    val direction: String?,
+    val isExpenseOverride: Int,
     val source: String,
     val accountLabel: String?
 )
@@ -34,6 +36,8 @@ interface AccountTransactionDao {
         SELECT id AS id, occurredAt AS occurredAt, amount AS amount,
                COALESCE(category, 'Expense') AS title,
                COALESCE(category, '') AS category,
+               direction AS direction,
+               isExpenseOverride AS isExpenseOverride,
                'account' AS source,
                counterparty AS accountLabel
         FROM account_transactions
@@ -48,6 +52,9 @@ interface AccountTransactionDao {
         ORDER BY occurredAt DESC, id DESC
     """)
     suspend fun getExpensesBetweenOnce(start: Long, end: Long): List<ExpenseRow>
+
+    @Query("SELECT MIN(occurredAt) FROM account_transactions")
+    suspend fun getEarliestOccurredAt(): Long?
 
     @Query("SELECT * FROM account_transactions WHERE accountId = :accountId ORDER BY occurredAt ASC, id ASC")
     fun observeByAccount(accountId: Long): Flow<List<AccountTransaction>>
@@ -87,6 +94,12 @@ interface AccountTransactionDao {
     @Query("DELETE FROM account_transactions WHERE id = :id AND isManual = 1")
     suspend fun deleteManualById(id: Long)
 
+    @Query("SELECT * FROM account_transactions WHERE smsRecordId = :smsRecordId")
+    suspend fun getBySmsRecordIdOnce(smsRecordId: Long): List<AccountTransaction>
+
+    @Query("DELETE FROM account_transactions WHERE smsRecordId = :smsRecordId")
+    suspend fun deleteBySmsRecordId(smsRecordId: Long)
+
     @Query("DELETE FROM account_transactions WHERE id = :id")
     suspend fun deleteById(id: Long)
 
@@ -111,6 +124,9 @@ interface AccountTransactionDao {
 
     @Query("UPDATE account_transactions SET counterparty = :counterparty, category = :category, amount = :amount WHERE id = :id")
     suspend fun updateTransactionDetails(id: Long, counterparty: String?, category: String?, amount: Double)
+
+    @Query("UPDATE account_transactions SET balanceAfter = :balanceAfter WHERE id = :id")
+    suspend fun updateBalanceAfter(id: Long, balanceAfter: Double?)
 
     @Query("UPDATE account_transactions SET transferId = :transferId WHERE id = :id")
     suspend fun updateTransferId(id: Long, transferId: Long?)
@@ -149,14 +165,21 @@ interface AccountTransactionDao {
                 WHERE t.accountId = a.id AND t.balanceAfter IS NOT NULL
                 ORDER BY t.occurredAt DESC, t.id DESC LIMIT 1) AS latestBalance,
                COALESCE((SELECT SUM(CASE WHEN direction = 'IN' THEN amount ELSE -amount END)
-                FROM account_transactions t WHERE t.accountId = a.id), 0) AS computedBalance,
+                FROM account_transactions t WHERE t.accountId = a.id
+                  AND t.category != 'DirectSet'), 0) AS computedBalance,
                COALESCE((SELECT SUM(CASE WHEN direction = 'IN' THEN amount ELSE 0 END)
-                FROM account_transactions t WHERE t.accountId = a.id AND t.occurredAt >= :monthStart), 0) AS monthIn,
+                FROM account_transactions t
+                WHERE t.accountId = a.id AND t.occurredAt >= :monthStart
+                  AND t.transferId IS NULL AND t.category != 'DirectSet'), 0) AS monthIn,
                COALESCE((SELECT SUM(CASE WHEN direction = 'OUT' THEN amount ELSE 0 END)
-                FROM account_transactions t WHERE t.accountId = a.id AND t.occurredAt >= :monthStart), 0) AS monthOut
+                FROM account_transactions t
+                WHERE t.accountId = a.id AND t.occurredAt >= :monthStart
+                  AND t.transferId IS NULL AND t.category != 'DirectSet'), 0) AS monthOut,
+               COALESCE((SELECT MAX(occurredAt) FROM account_transactions t
+                WHERE t.accountId = a.id AND t.category != 'DirectSet'), 0) AS lastActivity
         FROM accounts a
         WHERE a.isArchived = 0
-        ORDER BY a.kind, a.name
+        ORDER BY lastActivity DESC, a.name
     """)
     fun observeSummariesRaw(monthStart: Long): Flow<List<AccountSummaryRow>>
 
@@ -170,6 +193,7 @@ interface AccountTransactionDao {
             SUM(amount) AS total
         FROM account_transactions
         WHERE occurredAt >= :monthStart
+          AND direction = 'OUT'
           AND transferId IS NULL
           AND category != 'DirectSet'
         GROUP BY 
@@ -180,6 +204,29 @@ interface AccountTransactionDao {
         ORDER BY total DESC
     """)
     fun observeMonthlyExpenseByCategory(monthStart: Long): Flow<List<CategoryTotal>>
+
+    /** Monthly inflow per category (salary, received, credit); transfers excluded. */
+    @Query("""
+        SELECT 
+            CASE 
+                WHEN category LIKE 'Fund Transfer%' OR category LIKE 'Fund-Transfer%' THEN 'Fund Transfer'
+                ELSE COALESCE(NULLIF(category, ''), 'Uncategorized')
+            END AS category,
+            SUM(amount) AS total
+        FROM account_transactions
+        WHERE occurredAt >= :monthStart
+          AND direction = 'IN'
+          AND transferId IS NULL
+          AND category != 'DirectSet'
+          AND (isExpenseOverride IS NULL OR isExpenseOverride != -1)
+        GROUP BY 
+            CASE 
+                WHEN category LIKE 'Fund Transfer%' OR category LIKE 'Fund-Transfer%' THEN 'Fund Transfer'
+                ELSE COALESCE(NULLIF(category, ''), 'Uncategorized')
+            END
+        ORDER BY total DESC
+    """)
+    fun observeMonthlyIncomeByCategory(monthStart: Long): Flow<List<CategoryTotal>>
 }
 
 /** Raw projection joined onto [com.finmagic.data.local.entity.Account] in the repository. */
@@ -188,7 +235,8 @@ data class AccountSummaryRow(
     val latestBalance: Double?,
     val computedBalance: Double,
     val monthIn: Double,
-    val monthOut: Double
+    val monthOut: Double,
+    val lastActivity: Long
 )
 
 /** Monthly outflow aggregated per category (plan Phase 5 expense breakdown). */

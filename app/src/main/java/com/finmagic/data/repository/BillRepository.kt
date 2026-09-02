@@ -96,6 +96,9 @@ class BillRepository @Inject constructor(
     suspend fun findExistingBill(cardId: Long, period: String): Bill? =
         billDao.findExistingBill(cardId, period)
 
+    suspend fun findActiveUnpaidBill(cardId: Long, currency: String): Bill? =
+        billDao.findActiveUnpaidBill(cardId, currency)
+
     suspend fun findBillBySms(smsBody: String): Bill? = billDao.findBillBySms(smsBody)
 
     suspend fun deleteBillsByIds(ids: List<Long>) = billDao.deleteBillsByIds(ids)

@@ -54,6 +54,9 @@ class SettingsViewModel @Inject constructor(
     val largeDebitThreshold: StateFlow<Double> = preferenceManager.largeDebitThreshold
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 10_000.0)
 
+    val biometricLockEnabled: StateFlow<Boolean> = preferenceManager.biometricLockEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
     val categoryNicknames: StateFlow<Map<String, String>> = preferenceManager.categoryNicknames
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
@@ -69,6 +72,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setLargeDebitThreshold(threshold: Double) {
         viewModelScope.launch { preferenceManager.setLargeDebitThreshold(threshold) }
+    }
+
+    fun setBiometricLockEnabled(enabled: Boolean) {
+        viewModelScope.launch { preferenceManager.setBiometricLockEnabled(enabled) }
     }
 
     fun setCategoryNickname(category: String, nickname: String) {

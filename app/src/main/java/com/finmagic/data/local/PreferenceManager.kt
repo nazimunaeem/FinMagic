@@ -12,6 +12,17 @@ import javax.inject.Singleton
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
+data class RecurringTemplate(
+    val kind: String,
+    val title: String,
+    val amount: Double,
+    val category: String? = null,
+    val note: String? = null
+) {
+    val id: String
+        get() = "${kind.lowercase()}|${title.trim()}"
+}
+
 @Singleton
 class PreferenceManager @Inject constructor(@ApplicationContext private val context: Context) {
 
@@ -21,9 +32,11 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
     private val FIRST_SCAN_COMPLETE = booleanPreferencesKey("first_scan_complete")
     private val LARGE_DEBIT_ALERTS = booleanPreferencesKey("large_debit_alerts")
     private val LARGE_DEBIT_THRESHOLD = doublePreferencesKey("large_debit_threshold")
+    private val BIOMETRIC_LOCK = booleanPreferencesKey("biometric_lock")
     private val CATEGORY_NICKNAMES = stringSetPreferencesKey("category_nicknames")
     private val CASH_EXPENSE_CATEGORIES = stringPreferencesKey("cash_expense_categories")
     private val CASH_INCOME_CATEGORIES = stringPreferencesKey("cash_income_categories")
+    private val RECURRING_TEMPLATES = stringSetPreferencesKey("recurring_templates")
 
     val notificationsEnabled: Flow<Boolean> = context.dataStore.data.map { it[NOTIFICATIONS_ENABLED] ?: true }
     val alertRules: Flow<Set<String>> = context.dataStore.data.map {
@@ -35,6 +48,7 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
     /** Notify on large account debits (plan Phase 5). */
     val largeDebitAlerts: Flow<Boolean> = context.dataStore.data.map { it[LARGE_DEBIT_ALERTS] ?: true }
     val largeDebitThreshold: Flow<Double> = context.dataStore.data.map { it[LARGE_DEBIT_THRESHOLD] ?: 10_000.0 }
+    val biometricLockEnabled: Flow<Boolean> = context.dataStore.data.map { it[BIOMETRIC_LOCK] ?: false }
 
     /**
      * User-defined display nicknames for auto-detected transaction categories.
@@ -83,6 +97,10 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
         context.dataStore.edit { it[LARGE_DEBIT_THRESHOLD] = threshold }
     }
 
+    suspend fun setBiometricLockEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[BIOMETRIC_LOCK] = enabled }
+    }
+
     suspend fun setCategoryNickname(category: String, nickname: String) {
         context.dataStore.edit { prefs ->
             val current = prefs[CATEGORY_NICKNAMES].orEmpty().toMutableSet()
@@ -114,5 +132,35 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
 
     suspend fun setCashIncomeCategories(categories: List<String>) {
         context.dataStore.edit { it[CASH_INCOME_CATEGORIES] = categories.joinToString("\u0000") }
+    }
+
+    val recurringTemplates: Flow<List<RecurringTemplate>> = context.dataStore.data.map { prefs ->
+        (prefs[RECURRING_TEMPLATES] ?: emptySet()).mapNotNull { encoded ->
+            val parts = encoded.split("\u0001")
+            if (parts.size < 5) return@mapNotNull null
+            val kind = parts[0]
+            val title = parts[1]
+            val amount = parts[2].toDoubleOrNull() ?: return@mapNotNull null
+            val category = parts[3].ifBlank { null }
+            val note = parts[4].ifBlank { null }
+            RecurringTemplate(kind = kind, title = title, amount = amount, category = category, note = note)
+        }
+    }
+
+    suspend fun addRecurringTemplate(template: RecurringTemplate) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[RECURRING_TEMPLATES].orEmpty().toMutableSet()
+            current.removeAll { it.startsWith("${template.kind.lowercase()}|${template.title.trim()}" ) }
+            current.add(listOf(template.kind, template.title.trim(), template.amount.toString(), template.category ?: "", template.note ?: "").joinToString("\u0001"))
+            prefs[RECURRING_TEMPLATES] = current
+        }
+    }
+
+    suspend fun removeRecurringTemplate(template: RecurringTemplate) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[RECURRING_TEMPLATES].orEmpty().toMutableSet()
+            current.removeIf { it.startsWith("${template.kind.lowercase()}|${template.title.trim()}") }
+            prefs[RECURRING_TEMPLATES] = current
+        }
     }
 }

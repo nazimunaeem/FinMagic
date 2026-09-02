@@ -15,7 +15,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.AccountBalance
-import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Notifications
@@ -44,7 +43,6 @@ import com.finmagic.ui.theme.StatusSafe
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
-    onNavigateToDebug: () -> Unit = {},
     onNavigateToCategories: () -> Unit = {},
     onNavigateToSmsReview: () -> Unit = {}
 ) {
@@ -54,6 +52,8 @@ fun SettingsScreen(
     val exportState by viewModel.exportState.collectAsStateWithLifecycle()
     val largeDebitAlerts by viewModel.largeDebitAlerts.collectAsStateWithLifecycle()
     val largeDebitThreshold by viewModel.largeDebitThreshold.collectAsStateWithLifecycle()
+    val cashExpenseCategories by viewModel.cashExpenseCategories.collectAsStateWithLifecycle()
+    val cashIncomeCategories by viewModel.cashIncomeCategories.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var hasSmsPermission by remember {
@@ -83,8 +83,95 @@ fun SettingsScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
+            val quickStatusText = when {
+                !hasSmsPermission -> "Action required"
+                notificationsEnabled -> "Ready to monitor"
+                else -> "Monitoring idle"
+            }
+            val summaryTone = if (hasSmsPermission) StatusSafe else MaterialTheme.colorScheme.error
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            ) {
+                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "FinMagic status",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                            )
+                            Text(
+                                text = quickStatusText,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = summaryTone,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        StatusMiniTile(
+                            label = "SMS",
+                            value = if (hasSmsPermission) "On" else "Off",
+                            tint = if (hasSmsPermission) StatusSafe else MaterialTheme.colorScheme.error,
+                            modifier = Modifier.weight(1f)
+                        )
+                        StatusMiniTile(
+                            label = "Alerts",
+                            value = if (notificationsEnabled) "On" else "Off",
+                            tint = if (notificationsEnabled) StatusSafe else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        StatusMiniTile(
+                            label = "Categories",
+                            value = "${cashExpenseCategories.size + cashIncomeCategories.size}",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = false,
+                        onClick = onNavigateToCategories,
+                        label = { Text("Categories") }
+                    )
+                    FilterChip(
+                        selected = false,
+                        onClick = onNavigateToSmsReview,
+                        label = { Text("SMS Review") }
+                    )
+                }
+            }
+
             // Group 1: Permissions & Scanning
             SettingsGroup(title = "Permissions & Scanning") {
                 SettingsItem(
@@ -247,6 +334,25 @@ fun SettingsScreen(
                 )
             }
 
+            SettingsGroup(title = "Privacy & Security") {
+                val biometricLock by viewModel.biometricLockEnabled.collectAsStateWithLifecycle()
+                SettingsItem(
+                    icon = Icons.Default.CheckCircle,
+                    title = "Biometric Lock",
+                    description = "Require fingerprint or face unlock before opening the app",
+                    trailing = {
+                        Switch(
+                            checked = biometricLock,
+                            onCheckedChange = { viewModel.setBiometricLockEnabled(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = StatusSafe
+                            )
+                        )
+                    }
+                )
+            }
+
             // Group: SMS Recognition
             SettingsGroup(title = "SMS Recognition") {
                 SettingsItem(
@@ -293,17 +399,6 @@ fun SettingsScreen(
                         }
                     }
                 }
-            }
-
-            // Group 4: Developer Options
-            SettingsGroup(title = "Developer Options") {
-                SettingsItem(
-                    icon = Icons.Default.BugReport,
-                    title = "Debug Tools",
-                    description = "View internal activity logs and raw SMS records",
-                    onClick = onNavigateToDebug,
-                    trailing = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
-                )
             }
 
             // App Info
@@ -386,7 +481,12 @@ fun NotificationTimePickerDialog(
         },
         title = { Text("Select Alert Time") },
         text = {
-            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                contentAlignment = Alignment.Center
+            ) {
                 TimePicker(state = timePickerState)
             }
         }
@@ -558,12 +658,20 @@ fun SettingsItem(
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(24.dp)
-        )
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+            modifier = Modifier.size(36.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
         Spacer(modifier = Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
@@ -573,6 +681,37 @@ fun SettingsItem(
             Box(modifier = Modifier.padding(start = 8.dp)) {
                 trailing()
             }
+        }
+    }
+}
+
+@Composable
+private fun StatusMiniTile(
+    label: String,
+    value: String,
+    tint: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = tint
+            )
         }
     }
 }

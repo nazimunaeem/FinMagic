@@ -103,7 +103,7 @@ class SmsClassifierTest {
             "02-SEP-25 \n\nTk. 5,000.00 payment received \nUS$. 0.00 payment received \nCARD NO: 376948*****2945"
         )
         assertTrue(result is SmsClassification.CardPayment)
-        assertEquals("945", (result as SmsClassification.CardPayment).payment.cardTail)
+        assertEquals("2945", (result as SmsClassification.CardPayment).payment.cardTail)
     }
 
     @Test
@@ -698,16 +698,18 @@ class SmsClassifierTest {
     }
 
     @Test
-    fun cityBankZeroDueAmexBill_isBillStatement() {
+    fun dateOnlySms_doesNotInventMidnightTimestamp() {
+        val parsed = SmsDateParser.parseFirst("Your account updated on 15-05-2026. Balance is Tk 5000")
+        assertTrue(parsed == null)
+    }
+
+    @Test
+    fun cityBankZeroDueAmexBill_isNotTreatedAsActiveBill() {
         val result = classify(
             "01944-400032",
             "AMEX Bill Mar'25\nTotal Due\nTk 0.00\nMin Due\nTk 0.00\nCARD: 376***945\nClient ID: 2233552"
         )
-        assertTrue(result is SmsClassification.BillStatement)
-        val bill = (result as SmsClassification.BillStatement).bankSms
-        assertEquals("City Bank (Amex)", bill.bankName)
-        assertEquals("945", bill.cardLast4)
-        assertEquals(0.0, bill.totalDue, 0.01)
+        assertTrue(result is SmsClassification.Unparsed)
     }
 
     @Test

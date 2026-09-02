@@ -46,13 +46,35 @@ object PaymentSmsParser {
     )
 
     private val eblCardPaymentPattern = Regex(
-        """EBL[\s\u00A0]+CARDS?:[\s\u00A0]+(?:BDT|Tk|TK)?\.?\s*([\d,]+(?:\.\d+)?)\s+is\s+credited\s+to\s+Card\s+[\d*]+\*{1,4}(\d{4})""",
+        """EBL[\s\u00A0]+CARDS?:[\s\u00A0]+(?:Payment of )?(?:BDT|Tk|TK|USD)?\.?\s*([\d,]+\.?\d*)\s+(?:is )?credited to Card[\s\u00A0]+[\d*]+\*{1,4}(\d{3,4})""",
         RegexOption.IGNORE_CASE
     )
 
-    private val datePattern = Regex("""\b(\d{1,2}[-/.][A-Za-z]{3}[-/.]\d{2,4})\b""")
+    private val bkashCardPaymentPattern = Regex(
+        """Bill Payment of (?:Tk|TK)?\.?\s*([\d,]+\.?\d*) for ([A-Z]+) Credit Card is successful""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val datePattern = Regex("""\b(\d{1,2}[-/.][A-Za-z]{3}[-/.]\d{2,4}|\d{1,2}[-/.][0-9]{1,2}[-/.]\d{2,4})\b""")
 
     fun parse(body: String): ParsedPayment? {
+        // bKash to Card Payment
+        bkashCardPaymentPattern.find(body)?.let { match ->
+            val bankName = when {
+                match.groupValues[2].contains("CITY", ignoreCase = true) -> "City Bank"
+                match.groupValues[2].contains("EBL", ignoreCase = true) -> "EBL"
+                match.groupValues[2].contains("BRAC", ignoreCase = true) -> "BRAC Bank"
+                else -> match.groupValues[2]
+            }
+            return ParsedPayment(
+                cardTail = "", // bKash doesn't always show card tail in this message
+                amountBdt = parseAmount(match.groupValues[1]),
+                amountUsd = 0.0,
+                paymentDate = datePattern.find(body)?.groupValues?.get(1)?.let { BankSmsParser.normalizeDate(it) },
+                bankName = bankName
+            )
+        }
+
         // EBL card credit ("EBL CARDS: BDT 100 is credited to Card 423800**5428 ...").
         eblCardPaymentPattern.find(body)?.let { match ->
             return ParsedPayment(
@@ -91,10 +113,15 @@ object PaymentSmsParser {
         )
     }
 
-    /** Last 3 digits of a masked card number: "376***945"→"945", "376948*****2945"→"945". */
+    /** Last 3-4 digits of a masked card number: "376***945"→"945", "376948*****2945"→"2945". */
     private fun extractCardTail(mask: String): String? {
-        val cleaned = mask.replace(Regex("""[\s\-]"""), "")
-        return Regex("""(\d+)$""").find(cleaned)?.groupValues?.get(1)?.takeLast(3)
+        val cleaned = mask.replace(Regex("""[^0-9*]"""), "")
+        // Try to get digits after stars first
+        Regex("""\*+(\d+)$""").find(cleaned)?.groupValues?.get(1)?.let { return it }
+        // Fallback to last digits
+        return Regex("""(\d+)$""").find(cleaned)?.groupValues?.get(1)?.let { 
+            if (it.length > 4) it.takeLast(4) else it
+        }
     }
 
     private fun parseAmount(amount: String): Double {

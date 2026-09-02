@@ -24,4 +24,7 @@ interface CardTransactionDao {
 
     @Query("SELECT * FROM card_transactions ORDER BY occurredAt DESC")
     fun observeAll(): Flow<List<CardTransaction>>
+
+    @Query("SELECT MIN(occurredAt) FROM card_transactions")
+    suspend fun getEarliestOccurredAt(): Long?
 }

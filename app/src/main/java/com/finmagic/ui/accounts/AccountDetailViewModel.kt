@@ -45,6 +45,9 @@ class AccountDetailViewModel @Inject constructor(
     private val _account = MutableStateFlow<Account?>(null)
     val account: StateFlow<Account?> = _account.asStateFlow()
 
+    private val _balance = MutableStateFlow(0.0)
+    val balance: StateFlow<Double> = _balance.asStateFlow()
+
     val transactions: StateFlow<List<AccountTransaction>> =
         accountRepository.observeTransactions(accountId)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -63,6 +66,18 @@ class AccountDetailViewModel @Inject constructor(
         viewModelScope.launch {
             _account.value = accountRepository.getAccountOnce(accountId)
             _allAccounts.value = accountRepository.getAllAccountsOnce()
+            refreshBalance()
+        }
+    }
+
+    private suspend fun refreshBalance() {
+        val acct = _account.value ?: return
+        val latest = accountRepository.latestBalance(accountId)
+        if (acct.kind != Account.KIND_CASH && latest != null) {
+            _balance.value = latest
+        } else {
+            val txns = accountRepository.getTransactionsOnce(accountId)
+            _balance.value = AccountRepository.ledgerBalance(txns)
         }
     }
 
@@ -81,17 +96,19 @@ class AccountDetailViewModel @Inject constructor(
                 counterparty = counterparty?.ifBlank { null },
                 occurredAt = occurredAt
             )
+            refreshBalance()
         }
     }
 
     fun addTransfer(otherAccountId: Long, fromCash: Boolean, amount: Double) {
         viewModelScope.launch {
             accountRepository.addManualTransfer(otherAccountId, fromCash, amount, System.currentTimeMillis())
+            refreshBalance()
         }
     }
 
     fun deleteEntry(txnId: Long) {
-        viewModelScope.launch { accountRepository.deleteManualEntry(txnId) }
+        viewModelScope.launch { accountRepository.deleteEntry(txnId) }
     }
 
     fun setExpenseOverride(txnId: Long, value: Int) {
@@ -106,9 +123,26 @@ class AccountDetailViewModel @Inject constructor(
         viewModelScope.launch { accountRepository.updateTransactionDetails(txnId, counterparty, category, amount) }
     }
 
-    fun correctTransaction(txnId: Long, direction: String, amount: Double, accountId: Long, category: String, counterparty: String) {
+    fun correctTransaction(
+        txnId: Long,
+        direction: String,
+        amount: Double,
+        accountId: Long,
+        category: String,
+        counterparty: String,
+        balanceAfter: Double? = null
+    ) {
         viewModelScope.launch {
-            accountRepository.correctTransaction(txnId, direction, amount, accountId, category.ifBlank { null }, counterparty.ifBlank { null })
+            accountRepository.correctTransaction(
+                txnId, direction, amount, accountId,
+                category.ifBlank { null }, counterparty.ifBlank { null }, balanceAfter
+            )
+        }
+    }
+
+    fun ignoreTransaction(txnId: Long) {
+        viewModelScope.launch {
+            accountRepository.ignoreParsedTransaction(txnId)
         }
     }
 
@@ -137,25 +171,32 @@ class AccountDetailViewModel @Inject constructor(
 
     fun adjustCashBalance(targetBalance: Double) {
         viewModelScope.launch {
-            accountRepository.adjustCashBalance(targetBalance)
+            accountRepository.adjustCashBalance(targetBalance, accountId)
+            refreshBalance()
         }
     }
 
     fun setCashBalanceDirect(targetBalance: Double) {
         viewModelScope.launch {
-            accountRepository.setCashBalanceDirect(targetBalance)
+            accountRepository.setCashBalanceDirect(targetBalance, accountId)
+            refreshBalance()
         }
     }
 
     suspend fun getAllAccountsOnce(): List<Account> = accountRepository.getAllAccountsOnce()
 
-    fun exportCsv() {
+    fun exportCsv(startMillis: Long? = null, endMillis: Long? = null) {
         viewModelScope.launch {
             _exportState.value = ExportState.Loading
             try {
                 val context = getApplication<Application>()
                 val account = accountRepository.getAccountOnce(accountId)
                 val txns = accountRepository.getTransactionsOnce(accountId)
+                    .filter { txn ->
+                        val afterStart = startMillis == null || txn.occurredAt >= startMillis
+                        val beforeEnd = endMillis == null || txn.occurredAt <= endMillis
+                        afterStart && beforeEnd
+                    }
                 val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
                 val safeName = (account?.displayName ?: "account").replace(Regex("""[^A-Za-z0-9_-]"""), "")
                 val file = File(context.filesDir, "${safeName}_ledger_$stamp.csv")

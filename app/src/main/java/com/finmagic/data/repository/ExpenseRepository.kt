@@ -3,6 +3,7 @@ package com.finmagic.data.repository
 import com.finmagic.data.local.dao.AccountTransactionDao
 import com.finmagic.data.local.dao.CardTransactionDao
 import com.finmagic.data.local.entity.CardTransaction
+import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -14,7 +15,12 @@ data class ExpenseItem(
     val title: String,
     val category: String,
     val source: String, // "account" or "card"
-    val subtitle: String?
+    val subtitle: String?,
+    /** Set for account-sourced rows; used to toggle expense membership. */
+    val accountTxnId: Long? = null,
+    val direction: String? = null,
+    val rawCategory: String? = null,
+    val isExpenseOverride: Int = 0
 )
 
 data class CategoryTotal(
@@ -27,7 +33,10 @@ data class ExpenseStats(
     val total: Double,
     val count: Int,
     val dailyAverage: Double,
+    val daysInMonth: Int,
+    val daysElapsed: Int,
     val categories: List<CategoryTotal>,
+    val prevCategories: List<CategoryTotal>,
     val topCategory: CategoryTotal?,
     val prevTotal: Double
 )
@@ -40,7 +49,8 @@ class ExpenseRepository @Inject constructor(
     suspend fun getExpenses(start: Long, end: Long, prevStart: Long, prevEnd: Long): Pair<List<ExpenseItem>, ExpenseStats> {
         val accountRows = accountTxnDao.getExpensesBetweenOnce(start, end)
         val cardRows: List<CardTransaction> = cardTxnDao.getBetweenOnce(start, end)
-        val prevCardTotal = cardTxnDao.sumBetweenOnce(prevStart, prevEnd)
+        val prevAccountRows = accountTxnDao.getExpensesBetweenOnce(prevStart, prevEnd)
+        val prevCardRows: List<CardTransaction> = cardTxnDao.getBetweenOnce(prevStart, prevEnd)
 
         val items = buildList {
             for (r in accountRows) {
@@ -51,8 +61,12 @@ class ExpenseRepository @Inject constructor(
                         amount = r.amount,
                         title = r.title,
                         category = r.category.ifBlank { "Expense" },
-                        source = "account",
-                        subtitle = r.accountLabel
+                        source = r.source,
+                        subtitle = r.accountLabel,
+                        accountTxnId = r.id,
+                        direction = r.direction,
+                        rawCategory = r.category.ifBlank { null },
+                        isExpenseOverride = r.isExpenseOverride
                     )
                 )
             }
@@ -61,10 +75,9 @@ class ExpenseRepository @Inject constructor(
                     ExpenseItem(
                         uid = "c:${c.id}",
                         occurredAt = c.occurredAt,
-
                         amount = c.amount,
-                        title = c.merchant,
-                        category = "Card",
+                        title = c.merchant.ifBlank { "Card Purchase" },
+                        category = c.category?.ifBlank { null } ?: "Card",
                         source = "card",
                         subtitle = "${c.bankName} •••${c.cardTail}"
                     )
@@ -74,22 +87,50 @@ class ExpenseRepository @Inject constructor(
 
         val total = items.sumOf { it.amount }
         val count = items.size
-        val days = ((end - start) / 86_400_000L).coerceAtLeast(1)
+
+        val daysInMonth = Calendar.getInstance().apply { timeInMillis = start }
+            .getActualMaximum(Calendar.DAY_OF_MONTH)
+        val nowCal = Calendar.getInstance()
+        val isCurrentMonth = run {
+            val c = nowCal.clone() as Calendar
+            c.set(Calendar.DAY_OF_MONTH, 1)
+            c.set(Calendar.HOUR_OF_DAY, 0)
+            c.set(Calendar.MINUTE, 0)
+            c.set(Calendar.SECOND, 0)
+            c.set(Calendar.MILLISECOND, 0)
+            start == c.timeInMillis
+        }
+        val daysElapsed = if (isCurrentMonth) nowCal.get(Calendar.DAY_OF_MONTH) else daysInMonth
+
         val categories = items
             .groupBy { it.category }
             .map { (cat, list) -> CategoryTotal(cat, list.sumOf { it.amount }, list.size) }
             .sortedByDescending { it.total }
-        val topCategory = categories.firstOrNull()
+
+        val prevCategories = buildList {
+            prevAccountRows.forEach { r ->
+                add(r.category.ifBlank { "Expense" } to r.amount)
+            }
+            prevCardRows.forEach { c ->
+                add((c.category?.ifBlank { null } ?: "Card") to c.amount)
+            }
+        }
+            .groupBy({ it.first }, { it.second })
+            .map { (cat, amounts) -> CategoryTotal(cat, amounts.sum(), amounts.size) }
+            .sortedByDescending { it.total }
+
         // Previous period total = previous account expenses + previous card purchases.
-        val accountPrev = accountTxnDao.getExpensesBetweenOnce(prevStart, prevEnd).sumOf { it.amount }
-        val prevTotal = accountPrev + prevCardTotal
+        val prevTotal = prevCategories.sumOf { it.total }
 
         val stats = ExpenseStats(
             total = total,
             count = count,
-            dailyAverage = total / days,
+            dailyAverage = total / daysInMonth,
+            daysInMonth = daysInMonth,
+            daysElapsed = daysElapsed,
             categories = categories,
-            topCategory = topCategory,
+            prevCategories = prevCategories,
+            topCategory = categories.firstOrNull(),
             prevTotal = prevTotal
         )
         return items to stats
@@ -97,5 +138,14 @@ class ExpenseRepository @Inject constructor(
 
     suspend fun setExpenseOverride(accountTxnId: Long, value: Int) {
         accountTxnDao.setExpenseOverride(accountTxnId, value)
+    }
+
+    /** Earliest year with any ledger or card activity; null when the DB is empty. */
+    suspend fun earliestYear(): Int? {
+        val min = listOf(
+            accountTxnDao.getEarliestOccurredAt(),
+            cardTxnDao.getEarliestOccurredAt()
+        ).filterNotNull().minOrNull() ?: return null
+        return Calendar.getInstance().apply { timeInMillis = min }.get(Calendar.YEAR)
     }
 }

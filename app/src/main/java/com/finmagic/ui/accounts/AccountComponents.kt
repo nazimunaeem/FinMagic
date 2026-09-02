@@ -1,6 +1,9 @@
 package com.finmagic.ui.accounts
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -164,16 +167,6 @@ fun TxnRow(
                     )
                 }
             }
-            if (onDelete != null && txn.category != TxnCategory.ADJUSTMENT) {
-                IconButton(onClick = onDelete) {
-                    Icon(
-                        Icons.Filled.Delete,
-                        contentDescription = "Delete",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
         }
     }
 
@@ -206,7 +199,10 @@ fun EditTransactionDetailsDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (txn.category == TxnCategory.ADJUSTMENT) "Edit Adjustment Entry" else "Edit Entry Details") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 OutlinedTextField(
                     value = note,
                     onValueChange = { note = it },
@@ -439,7 +435,10 @@ fun AdjustCashBalanceDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 Text(
                     text = "Current: Tk ${String.format(Locale.US, "%,.2f", currentBalance)}",
                     style = MaterialTheme.typography.bodyMedium,
@@ -512,6 +511,8 @@ fun TxnDetailDialog(
     onDismiss: () -> Unit,
     alreadyExpense: Boolean = false,
     onSetExpense: ((Boolean) -> Unit)? = null,
+    alreadyIncome: Boolean = false,
+    onSetIncome: ((Boolean) -> Unit)? = null,
     /** Non-null only for rows that can be edited (manual entries / adjustments). */
     onEditDetails: (() -> Unit)? = null,
     /** Non-null to show a "Correct" action for SMS-derived transactions. */
@@ -539,7 +540,10 @@ fun TxnDetailDialog(
             }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
@@ -619,7 +623,17 @@ fun TxnDetailDialog(
         },
         confirmButton = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (onSetExpense != null) {
+                if (isIn && onSetIncome != null) {
+                    Checkbox(
+                        checked = alreadyIncome,
+                        onCheckedChange = { checked -> onSetIncome(checked) }
+                    )
+                    Text(
+                        text = "Income",
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.clickable { onSetIncome(!alreadyIncome) }
+                    )
+                } else if (!isIn && onSetExpense != null) {
                     Checkbox(
                         checked = alreadyExpense,
                         onCheckedChange = { checked -> onSetExpense(checked) }
@@ -695,6 +709,7 @@ fun EditAccountDialog(
         title = { Text("Edit Account") },
         text = {
             Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 OutlinedTextField(
@@ -789,8 +804,7 @@ fun DeleteAccountDialog(
 
 /**
  * Correction dialog for misparsed SMS transactions (plan §2.2).
- * Allows changing direction, amount, account, category, and counterparty.
- * For Phase 1, correction is one-time only (no reusable rule).
+ * Allows changing direction, amount, account, category, counterparty, and balance.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -798,22 +812,35 @@ fun CorrectTransactionDialog(
     txn: AccountTransaction,
     accounts: List<com.finmagic.data.local.entity.Account>,
     onDismiss: () -> Unit,
-    onConfirm: (direction: String, amount: Double, accountId: Long, category: String, counterparty: String) -> Unit
+    onConfirm: (direction: String, amount: Double, accountId: Long, category: String, counterparty: String, balanceAfter: Double?) -> Unit,
+    onIgnore: (() -> Unit)? = null
 ) {
     var direction by remember { mutableStateOf(txn.direction) }
     var amountText by remember { mutableStateOf(String.format(Locale.US, "%.2f", txn.amount)) }
+    var balanceText by remember { mutableStateOf(txn.balanceAfter?.let { String.format(Locale.US, "%.2f", it) } ?: "") }
     var selectedAccountId by remember { mutableStateOf(txn.accountId) }
     var category by remember { mutableStateOf(txn.category ?: "") }
     var counterparty by remember { mutableStateOf(txn.counterparty ?: "") }
 
     val amount = amountText.replace(",", "").toDoubleOrNull()
+    val balanceAfter = balanceText.replace(",", "").toDoubleOrNull()
     val isValid = amount != null && amount > 0
+
+    val detectedBalances = remember(txn.smsBody) {
+        txn.smsBody?.let { body ->
+            val regex = Regex("""(?:Balance|Available balance|Current Balance|C/B|A/C Bal)[:\s]*(?:Tk|BDT)?\.?\s*([\d,]+(?:\.\d+)?)""", RegexOption.IGNORE_CASE)
+            regex.findAll(body).mapNotNull { m -> m.groupValues[1].replace(",", "").toDoubleOrNull() }.toList()
+        } ?: emptyList()
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Correct Transaction") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 Text("Direction", style = MaterialTheme.typography.labelMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
@@ -836,6 +863,34 @@ fun CorrectTransactionDialog(
                     modifier = Modifier.fillMaxWidth(),
                     prefix = { Text("Tk ") }
                 )
+
+                OutlinedTextField(
+                    value = balanceText,
+                    onValueChange = { balanceText = it },
+                    label = { Text("Reported Balance (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    prefix = { Text("Tk ") }
+                )
+
+                if (detectedBalances.isNotEmpty()) {
+                    Text(
+                        "Detected balances:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        detectedBalances.forEach { bal ->
+                            AssistChip(
+                                onClick = { balanceText = "%,.2f".format(bal) },
+                                label = { Text("Tk %,.2f".format(bal)) }
+                            )
+                        }
+                    }
+                }
 
                 Text("Account", style = MaterialTheme.typography.labelMedium)
                 accounts.forEach { account ->
@@ -885,13 +940,20 @@ fun CorrectTransactionDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                enabled = isValid,
-                onClick = {
-                    val amt = amount ?: return@TextButton
-                    onConfirm(direction, amt, selectedAccountId, category, counterparty)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (onIgnore != null) {
+                    TextButton(onClick = onIgnore) {
+                        Text("Ignore SMS", color = MaterialTheme.colorScheme.error)
+                    }
                 }
-            ) { Text("Correct") }
+                TextButton(
+                    enabled = isValid,
+                    onClick = {
+                        val amt = amount ?: return@TextButton
+                        onConfirm(direction, amt, selectedAccountId, category, counterparty, balanceAfter)
+                    }
+                ) { Text("Correct") }
+            }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }

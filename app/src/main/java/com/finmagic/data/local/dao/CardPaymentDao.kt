@@ -12,6 +12,9 @@ interface CardPaymentDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(payment: CardPayment): Long
 
+    @Query("DELETE FROM card_payments WHERE smsBody = :smsBody")
+    suspend fun deleteBySmsBody(smsBody: String)
+
     @Query("SELECT * FROM card_payments WHERE appliedBillId IS NULL ORDER BY paidAt ASC")
     suspend fun getUnappliedOnce(): List<CardPayment>
 

@@ -123,7 +123,7 @@ The correction flow must show a before/after preview and the number of historica
 
 ### 2.3 Teach current SMS
 
-Status: ✅ implemented (credit/debit/ATM/ignore with date selection, counterparty, category; reusable rules; account creation remains).
+Status: ✅ implemented (credit/debit/ATM/ignore with date selection, balance selection, counterparty, category, reusable rules, and account creation).
 
 The teaching screen should guide the user through a preview-first form:
 
@@ -474,9 +474,9 @@ Status: ✅ implemented.
 - ✅ Date picker integration.
 - ✅ Counterparty and category fields in teaching form.
 - ✅ "Ignore Similar" action to auto-ignore future SMS from a sender.
-- ⬜ Account creation during teaching (Phase 4).
+- ✅ Account creation during teaching (Phase 4).
 
-Also include correction of an existing parsed transaction for direction, amount, account, category, and ignore/noise. Corrections should be one-time only in this phase.
+Also include correction of an existing parsed transaction for direction, amount, account, category, and ignore/noise. Corrections should be one-time only in this phase. (✅ implemented via `CorrectTransactionDialog`).
 
 ### Phase 2 - Reusable keyword rules
 
@@ -495,27 +495,31 @@ Status: ✅ implemented.
 
 ### Phase 3 - Field extraction
 
-Status: ⬜ not started.
+Status: ✅ implemented.
 
-- Generated amount/date/balance/account/counterparty patterns.
-- Highlighted match preview.
-- Rule test screen.
-- Invalid-pattern safeguards.
+- ✅ Generated amount/date/balance/account/counterparty patterns (`SmsTeachingEngine.extractAllFields`, `generatePattern`).
+- ✅ Highlighted match preview (`TeachSmsSheet` extracted fields banner).
+- ✅ Rule test screen (`RuleTestScreen`).
+- ✅ Invalid-pattern safeguards (length and pattern validation in `generatePattern`).
 
 ### Phase 4 - Account creation and historical application
 
-- Create account from teaching flow.
-- Historical match count and preview.
-- Bulk application with progress and cancellation.
-- Provenance and audit records.
+Status: ✅ implemented.
+
+- ✅ Create account from teaching flow (`CreateAccountDialog` with callback selecting new account ID).
+- ✅ Historical match count and preview (`RuleItem` match count & status).
+- ✅ Bulk application to historical unparsed SMS (`SmsTeachingEngine.applyRuleToHistorical`, `onApplyHistorical`).
+- ✅ Provenance and audit records (`SmsRuleApplication` table & DAO).
 
 ### Phase 5 - Conflict handling and polish
 
-- Specificity scoring.
-- Conflicting-rule review.
-- Rule analytics and last-match display.
-- Privacy controls and disable-all action.
-- Accessibility and large-font testing.
+Status: ✅ implemented.
+
+- ✅ Specificity scoring (`SmsTeachingEngine.scoreRule`).
+- ✅ Conflicting-rule review (returns `NEEDS_REVIEW` / null on tied scores with differing actions/accounts).
+- ✅ Rule analytics and last-match display (`matchCount`, `lastMatchedAt`).
+- ✅ Privacy controls and disable-all action.
+- ✅ Scrollable dialogs and large-font testing.
 
 ---
 
@@ -525,9 +529,9 @@ Start with Phase 1 and one narrow Phase 2 slice:
 
 1. ✅ Add an `Unparsed SMS` review state.
 2. ✅ Add `Teach` from the SMS review screen (dedicated screen, not buried in Debug).
-3. ⬜ Add `Correct` from an automatically created transaction.
+3. ✅ Add `Correct` from an automatically created transaction.
 4. ✅ Support credit/debit/ignore and account correction; current implementation supports credit/debit/ATM/ignore for unparsed SMS.
-5. ✅ Support amount selection and existing account selection; date and account creation remain.
+5. ✅ Support amount selection, date selection, account selection, and account creation.
 6. ✅ Apply once through `AccountRepository` without duplication.
 7. ✅ Save only sender plus required/excluded keywords for future use (with priority-based matching).
 8. ✅ Add regression coverage for a shared-sender Rocket message and DBBL NexusPay message.

@@ -2,6 +2,8 @@ package com.finmagic.ui.accounts
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -13,6 +15,9 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.*
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -21,23 +26,34 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.finmagic.data.local.dao.AccountTransactionWithAccount
 import com.finmagic.data.local.entity.Account
+import com.finmagic.data.local.entity.AccountSummary
 import com.finmagic.data.local.entity.AccountTransaction
 import com.finmagic.ui.theme.StatusSafe
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.rememberDatePickerState
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountsScreen(
+    initialTab: Int = 0,
+    onTabSelected: (Int) -> Unit = {},
     onAccountClick: (Long) -> Unit,
+    showTopBar: Boolean = true,
+    showPill: Boolean = true,
     viewModel: AccountsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -48,17 +64,29 @@ fun AccountsScreen(
     var showAddDialog by remember { mutableStateOf(false) }
     var detailTxn by remember { mutableStateOf<AccountTransactionWithAccount?>(null) }
     var editTxn by remember { mutableStateOf<AccountTransaction?>(null) }
-    // Not saveable on purpose: re-entering the section always lands on History.
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: History, 1: Accounts
+    var selectedTab by rememberSaveable { mutableIntStateOf(initialTab) }
 
-    // History-tab month paging (month is 0-based).
+    // Shared month context for both tabs (month is 0-based).
     val nowCal = remember { Calendar.getInstance() }
-    var historyYear by rememberSaveable { mutableIntStateOf(nowCal.get(Calendar.YEAR)) }
-    var historyMonth by rememberSaveable { mutableIntStateOf(nowCal.get(Calendar.MONTH)) }
+    var pagerYear by rememberSaveable { mutableIntStateOf(nowCal.get(Calendar.YEAR)) }
+    var pagerMonth by rememberSaveable { mutableIntStateOf(nowCal.get(Calendar.MONTH)) }
 
-    val monthGroups = remember(state.recentTransactions, historyYear, historyMonth) {
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var categoryFilter by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // Keep the ViewModel's month (header + summaries) in sync with the pager.
+    LaunchedEffect(pagerYear, pagerMonth) { viewModel.setSelectedMonth(pagerYear, pagerMonth) }
+    LaunchedEffect(Unit) { viewModel.ensureCashAccount() }
+
+    val headerMonthLabel = remember(pagerYear, pagerMonth) {
+        SimpleDateFormat("MMMM yyyy", Locale.US).format(
+            Calendar.getInstance().apply { set(pagerYear, pagerMonth, 1) }.time
+        )
+    }
+
+    val monthTxns = remember(state.recentTransactions, pagerYear, pagerMonth) {
         val cal = Calendar.getInstance().apply {
-            set(historyYear, historyMonth, 1, 0, 0, 0)
+            set(pagerYear, pagerMonth, 1, 0, 0, 0)
             set(Calendar.MILLISECOND, 0)
         }
         val start = cal.timeInMillis
@@ -66,26 +94,48 @@ fun AccountsScreen(
         val end = cal.timeInMillis
         state.recentTransactions
             .filter { it.occurredAt >= start && it.occurredAt < end }
+    }
+    val monthCategories = remember(monthTxns) {
+        monthTxns.mapNotNull { it.category }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+    val filteredMonthTxns = remember(monthTxns, state.recentTransactions, searchQuery, categoryFilter) {
+        val q = searchQuery.trim()
+        // When a search query is active, look across ALL transactions, not just
+        // the visible month, so older entries are still findable.
+        val base = if (q.isEmpty()) monthTxns else state.recentTransactions
+        base.filter { txn ->
+            val matchesCategory = categoryFilter == null || categoryFilter == txn.category
+            val matchesSearch = q.isEmpty() ||
+                listOf(txn.counterparty, txn.category, txn.accountName).any {
+                    it != null && it.contains(q, ignoreCase = true)
+                }
+            matchesCategory && matchesSearch
+        }
+    }
+    val monthGroups = remember(filteredMonthTxns) {
+        filteredMonthTxns
             .groupBy { dayStart(it.occurredAt) }
             .toList()
             .sortedByDescending { it.first }
             .map { (dayStartMillis, txns) -> dayLabel(dayStartMillis) to txns }
     }
 
-    LaunchedEffect(Unit) { viewModel.ensureCashAccount() }
-
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Accounts",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                windowInsets = WindowInsets(0, 0, 0, 0)
-            )
+        topBar = if (showTopBar) {
+            {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = "Accounts",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
+                    windowInsets = WindowInsets(0, 0, 0, 0)
+                )
+            }
+        } else {
+            {}
         }
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize()) {
@@ -97,21 +147,38 @@ fun AccountsScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                // Header (visible in both tabs)
-                item {
-                    TotalBalanceHeader(
-                        totalBalance = state.totalBalance,
-                        monthIn = state.monthIn,
-                        monthOut = state.monthOut
-                    )
-                }
-
                 if (selectedTab == 1) {
                     // ACCOUNTS TAB
-                    if (state.expensesByCategory.isNotEmpty()) {
-                        item {
-                                ExpenseBreakdownCard(state.expensesByCategory, categoryNicknames)
-                        }
+                    item {
+                        MonthPager(
+                            year = pagerYear,
+                            month = pagerMonth,
+                            onPrevious = {
+                                var m = pagerMonth - 1
+                                var y = pagerYear
+                                if (m < 0) { m = 11; y -= 1 }
+                                pagerMonth = m
+                                pagerYear = y
+                            },
+                            onNext = {
+                                var m = pagerMonth + 1
+                                var y = pagerYear
+                                if (m > 11) { m = 0; y += 1 }
+                                pagerMonth = m
+                                pagerYear = y
+                            },
+                            nextEnabled = !(pagerYear == nowCal.get(Calendar.YEAR) &&
+                                pagerMonth == nowCal.get(Calendar.MONTH))
+                        )
+                    }
+
+                    item {
+                        TotalBalanceHeader(
+                            totalBalance = state.totalBalance,
+                            monthIn = state.monthIn,
+                            monthOut = state.monthOut,
+                            monthLabel = headerMonthLabel
+                        )
                     }
 
                     if (state.summaries.isNotEmpty()) {
@@ -124,10 +191,12 @@ fun AccountsScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 4.dp)
                             )
                         }
-                        items(state.summaries, key = { "account_${it.account.id}" }) { summary ->
+                        items(
+                            state.summaries.sortedWith(compareBy<AccountSummary> { it.account.kind != Account.KIND_CASH }.thenByDescending { it.displayBalance }),
+                            key = { "account_${it.account.id}" }
+                        ) { summary ->
                             AccountCard(
-                                account = summary.account,
-                                balance = summary.displayBalance,
+                                summary = summary,
                                 onClick = { onAccountClick(summary.account.id) },
                                 modifier = Modifier.padding(horizontal = 16.dp)
                             )
@@ -149,29 +218,89 @@ fun AccountsScreen(
                             }
                         }
                     }
+
+                    if (state.archivedAccounts.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "ARCHIVED (${state.archivedAccounts.size})",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 4.dp)
+                            )
+                        }
+                        items(state.archivedAccounts, key = { "archived_${it.id}" }) { account ->
+                            ArchivedAccountRow(
+                                account = account,
+                                onRestore = { viewModel.restoreAccount(account.id) },
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+                        }
+                    }
                 } else {
                     // HISTORY TAB
                     item {
                         MonthPager(
-                            year = historyYear,
-                            month = historyMonth,
+                            year = pagerYear,
+                            month = pagerMonth,
                             onPrevious = {
-                                var m = historyMonth - 1
-                                var y = historyYear
+                                var m = pagerMonth - 1
+                                var y = pagerYear
                                 if (m < 0) { m = 11; y -= 1 }
-                                historyMonth = m
-                                historyYear = y
+                                pagerMonth = m
+                                pagerYear = y
                             },
                             onNext = {
-                                var m = historyMonth + 1
-                                var y = historyYear
+                                var m = pagerMonth + 1
+                                var y = pagerYear
                                 if (m > 11) { m = 0; y += 1 }
-                                historyMonth = m
-                                historyYear = y
+                                pagerMonth = m
+                                pagerYear = y
                             },
-                            nextEnabled = !(historyYear == nowCal.get(Calendar.YEAR) &&
-                                historyMonth == nowCal.get(Calendar.MONTH))
+                            nextEnabled = !(pagerYear == nowCal.get(Calendar.YEAR) &&
+                                pagerMonth == nowCal.get(Calendar.MONTH))
                         )
+                    }
+                    item {
+                        TotalBalanceHeader(
+                            totalBalance = state.totalBalance,
+                            monthIn = state.monthIn,
+                            monthOut = state.monthOut,
+                            monthLabel = headerMonthLabel
+                        )
+                    }
+
+                    item {
+                        SearchField(
+                            query = searchQuery,
+                            onQueryChange = { searchQuery = it },
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                    }
+                    if (monthCategories.isNotEmpty()) {
+                        item {
+                            LazyRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                item {
+                                    FilterChip(
+                                        selected = categoryFilter == null,
+                                        onClick = { categoryFilter = null },
+                                        label = { Text("All") }
+                                    )
+                                }
+                                items(monthCategories) { cat ->
+                                    FilterChip(
+                                        selected = categoryFilter == cat,
+                                        onClick = { categoryFilter = if (categoryFilter == cat) null else cat },
+                                        label = { Text(categoryLabel(cat, categoryNicknames)) }
+                                    )
+                                }
+                            }
+                        }
                     }
                     if (monthGroups.isNotEmpty()) {
                         item {
@@ -196,14 +325,11 @@ fun AccountsScreen(
                             items(txns, key = { "txn_${it.id}" }) { txnWithAcct ->
                                 val txn = txnWithAcct.toTransaction()
                                 Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                                        TxnRow(
-                                            txn = txn,
-                                            accountName = txnWithAcct.accountName,
-                                            categoryNicknames = categoryNicknames,
-                                            onTap = { detailTxn = txnWithAcct },
-                                        onDelete = if (txn.isManual || txn.category == com.finmagic.data.sms.parsers.TxnCategory.ADJUSTMENT) {
-                                            { viewModel.deleteTransaction(txn.id) }
-                                        } else null,
+                                    TxnRow(
+                                        txn = txn,
+                                        accountName = txnWithAcct.accountName,
+                                        categoryNicknames = categoryNicknames,
+                                        onTap = { detailTxn = txnWithAcct },
                                         onUpdateCategory = { newCat ->
                                             viewModel.updateTransactionCategory(txn.id, newCat)
                                         }
@@ -220,7 +346,10 @@ fun AccountsScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "No transactions found for this month.",
+                                    text = if (searchQuery.isBlank() && categoryFilter == null)
+                                        "No transactions found for this month."
+                                    else
+                                        "No matching transactions.",
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center
@@ -232,7 +361,7 @@ fun AccountsScreen(
             }
 
             // Floating Pill Tab
-            Surface(
+            if (showPill) Surface(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 32.dp)
@@ -251,14 +380,14 @@ fun AccountsScreen(
                     PillTabItem(
                         selected = selectedTab == 0,
                         icon = if (selectedTab == 0) Icons.Filled.History else Icons.Outlined.History,
-                        onClick = { selectedTab = 0 }
+                        onClick = { selectedTab = 0; onTabSelected(0) }
                     )
 
                     // Accounts Icon
                     PillTabItem(
                         selected = selectedTab == 1,
                         icon = if (selectedTab == 1) Icons.Filled.AccountBalance else Icons.Outlined.AccountBalance,
-                        onClick = { selectedTab = 1 }
+                        onClick = { selectedTab = 1; onTabSelected(1) }
                     )
 
                     // Add Icon (The Fab in the Pill)
@@ -305,6 +434,11 @@ fun AccountsScreen(
                 )
                 detailTxn = null
             },
+            alreadyIncome = false,
+            onSetIncome = { include ->
+                viewModel.setExpenseOverride(txn.id, if (include) 0 else -1)
+                detailTxn = null
+            },
             onEditDetails = {
                 detailTxn = null
                 editTxn = txn
@@ -320,12 +454,10 @@ fun AccountsScreen(
                 viewModel.updateTransactionDetails(txn.id, counterparty, category, amount)
                 editTxn = null
             },
-            onDelete = if (txn.category == com.finmagic.data.sms.parsers.TxnCategory.ADJUSTMENT) {
-                {
-                    viewModel.deleteTransaction(txn.id)
-                    editTxn = null
-                }
-            } else null
+            onDelete = {
+                viewModel.deleteTransaction(txn.id)
+                editTxn = null
+            }
         )
     }
 }
@@ -398,7 +530,8 @@ private fun PillTabItem(
 }
 
 @Composable
-private fun AddEntryDialog(
+@OptIn(ExperimentalMaterial3Api::class)
+internal fun AddEntryDialog(
     viewModel: AccountsViewModel,
     summaries: List<com.finmagic.data.local.entity.AccountSummary>,
     expenseCategories: List<String>,
@@ -411,6 +544,9 @@ private fun AddEntryDialog(
     var category by remember { mutableStateOf<String?>(null) }
     val amount = amountText.replace(",", "").toDoubleOrNull() ?: 0.0
     val activeCategories = if (mode == "INCOME") incomeCategories else expenseCategories
+    var occurredAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = occurredAt)
 
     // For Transfer
     var targetAccountId by remember { mutableStateOf<Long?>(null) }
@@ -433,7 +569,10 @@ private fun AddEntryDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Entry") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 // Mode Selector
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     SegmentedButton(
@@ -459,7 +598,24 @@ private fun AddEntryDialog(
                     label = { Text("Amount") },
                     singleLine = true,
                     placeholder = { Text("0.00") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
+                )
+
+                val dateText = SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date(occurredAt))
+                OutlinedTextField(
+                    value = dateText,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Date") },
+                    trailingIcon = {
+                        Icon(Icons.Default.CalendarMonth, contentDescription = "Pick date")
+                    },
+                    placeholder = { Text("Tap to pick") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showDatePicker = true },
+                    singleLine = true
                 )
 
                 if (mode == "EXPENSE" || mode == "INCOME") {
@@ -529,10 +685,42 @@ private fun AddEntryDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { picked ->
+                        val original = Calendar.getInstance().apply { timeInMillis = occurredAt }
+                        occurredAt = Calendar.getInstance().apply {
+                            timeInMillis = picked
+                            set(Calendar.HOUR_OF_DAY, original.get(Calendar.HOUR_OF_DAY))
+                            set(Calendar.MINUTE, original.get(Calendar.MINUTE))
+                            set(Calendar.SECOND, original.get(Calendar.SECOND))
+                            set(Calendar.MILLISECOND, original.get(Calendar.MILLISECOND))
+                        }.timeInMillis
+                    }
+                    showDatePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 }
 
 @Composable
-private fun TotalBalanceHeader(totalBalance: Double, monthIn: Double, monthOut: Double) {
+internal fun TotalBalanceHeader(
+    totalBalance: Double,
+    monthIn: Double,
+    monthOut: Double,
+    monthLabel: String
+) {
+    val net = monthIn - monthOut
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -552,41 +740,67 @@ private fun TotalBalanceHeader(totalBalance: Double, monthIn: Double, monthOut: 
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
-            Spacer(modifier = Modifier.height(12.dp))
-            Row {
-                FlowBadge(label = "In", value = monthIn, color = StatusSafe)
-                Spacer(modifier = Modifier.width(16.dp))
-                FlowBadge(label = "Out", value = monthOut, color = MaterialTheme.colorScheme.error)
+            Text(
+                text = monthLabel,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
+                fontWeight = FontWeight.Medium
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "In",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = StatusSafe,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = String.format(Locale.US, "Tk %,.0f", monthIn),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Out",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = String.format(Locale.US, "Tk %,.0f", monthOut),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Net",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (net >= 0) StatusSafe else MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = String.format(Locale.US, "Tk %,.0f", net),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun FlowBadge(label: String, value: Double, color: Color) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = color,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(
-            text = String.format(Locale.US, "Tk %,.2f", value),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onPrimaryContainer
-        )
-    }
-}
-
-@Composable
-private fun ExpenseBreakdownCard(
+internal fun ExpenseBreakdownCard(
     expenses: List<com.finmagic.data.local.dao.CategoryTotal>,
+    income: List<com.finmagic.data.local.dao.CategoryTotal>,
+    monthLabel: String,
     categoryNicknames: Map<String, String> = emptyMap()
 ) {
-    val totalOut = expenses.filter { it.category != "Credit" }.sumOf { it.total }.takeIf { it > 0.0 } ?: 0.0
-    val totalIn = expenses.filter { it.category == "Credit" }.sumOf { it.total }.takeIf { it > 0.0 } ?: 0.0
+    val totalOut = expenses.sumOf { it.total }.takeIf { it > 0.0 } ?: 0.0
+    val totalIn = income.sumOf { it.total }.takeIf { it > 0.0 } ?: 0.0
 
     if (totalOut <= 0.0 && totalIn <= 0.0) return
 
@@ -607,7 +821,7 @@ private fun ExpenseBreakdownCard(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "This Month",
+                        text = monthLabel,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -632,54 +846,102 @@ private fun ExpenseBreakdownCard(
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
-            
-            val displayCategories = expenses.take(5)
-            displayCategories.forEach { entry ->
-                val isCredit = entry.category == "Credit"
-                val baseTotal = if (isCredit) totalIn else totalOut
-                val share = if (baseTotal > 0) (entry.total / baseTotal).toFloat() else 0f
-                val color = if (isCredit) StatusSafe else MaterialTheme.colorScheme.primary
 
-                Column(modifier = Modifier.padding(vertical = 6.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .background(color.copy(alpha = share.coerceIn(0.3f, 1f)), CircleShape)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = categoryLabel(entry.category, categoryNicknames),
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            text = String.format(Locale.US, "Tk %,.2f", entry.total),
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    LinearProgressIndicator(
-                        progress = { share },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(CircleShape),
-                        color = color,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+            if (totalOut > 0) {
+                Text(
+                    text = "Spending",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                expenses.take(5).forEach { entry ->
+                    BreakdownBar(
+                        label = categoryLabel(entry.category, categoryNicknames),
+                        total = entry.total,
+                        baseTotal = totalOut,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                if (expenses.size > 5) {
+                    Text(
+                        text = "+ ${expenses.size - 5} more",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 4.dp).align(Alignment.CenterHorizontally)
                     )
                 }
             }
-            if (expenses.size > 5) {
+
+            if (totalIn > 0 && totalOut > 0) {
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            if (totalIn > 0) {
                 Text(
-                    text = "+ ${expenses.size - 5} more",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(top = 8.dp).align(Alignment.CenterHorizontally)
+                    text = "Income",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = StatusSafe
                 )
+                income.take(3).forEach { entry ->
+                    BreakdownBar(
+                        label = categoryLabel(entry.category, categoryNicknames),
+                        total = entry.total,
+                        baseTotal = totalIn,
+                        color = StatusSafe
+                    )
+                }
+                if (income.size > 3) {
+                    Text(
+                        text = "+ ${income.size - 3} more",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 4.dp).align(Alignment.CenterHorizontally)
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun BreakdownBar(
+    label: String,
+    total: Double,
+    baseTotal: Double,
+    color: Color
+) {
+    val share = if (baseTotal > 0) (total / baseTotal).toFloat() else 0f
+
+    Column(modifier = Modifier.padding(vertical = 6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(color.copy(alpha = share.coerceIn(0.3f, 1f)), CircleShape)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = String.format(Locale.US, "Tk %,.2f", total),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        LinearProgressIndicator(
+            progress = { share },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(CircleShape),
+            color = color,
+            trackColor = MaterialTheme.colorScheme.surfaceVariant
+        )
     }
 }
 
@@ -690,14 +952,38 @@ fun accountIcon(kind: String): ImageVector = when (kind) {
 }
 
 @Composable
-private fun AccountCard(account: Account, balance: Double, onClick: () -> Unit, modifier: Modifier = Modifier) {
+internal fun AccountCard(
+    summary: AccountSummary,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val account = summary.account
+    val balance = summary.displayBalance
+    val net = summary.monthIn - summary.monthOut
+    val divergence = account.kind != Account.KIND_CASH &&
+        summary.latestBalance != null &&
+        kotlin.math.abs(summary.latestBalance - summary.computedBalance) > 0.01
+
+    val kindLabel = when (account.kind) {
+        Account.KIND_CASH -> "Cash"
+        Account.KIND_BANK -> "Bank"
+        Account.KIND_WALLET -> "Wallet"
+        else -> "Account"
+    }
+
+    val netColor = when {
+        net > 0.005 -> StatusSafe
+        net < -0.005 -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
@@ -705,35 +991,170 @@ private fun AccountCard(account: Account, balance: Double, onClick: () -> Unit, 
             modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = accountIcon(account.kind),
-                contentDescription = account.kind,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(32.dp)
-            )
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                modifier = Modifier.size(42.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                    Icon(
+                        imageVector = accountIcon(account.kind),
+                        contentDescription = account.kind,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = account.displayName,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium
-                )
-                if (account.kind != Account.KIND_CASH &&
-                    !account.displayName.contains(account.accountMask)
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = account.displayName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
+                    ) {
+                        Text(
+                            text = kindLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                if (account.kind != Account.KIND_CASH && !account.displayName.contains(account.accountMask)) {
                     Text(
                         text = "•• ${account.accountMask}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 6.dp)
+                ) {
+                    Text(
+                        text = when {
+                            net > 0.005 -> "+Tk ${String.format(Locale.US, "%,.0f", net)} this month"
+                            net < -0.005 -> "−Tk ${String.format(Locale.US, "%,.0f", kotlin.math.abs(net))} this month"
+                            else -> "No monthly change"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = netColor,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (account.includeInTotal) {
+                        Text(
+                            text = "Included",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = StatusSafe,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                if (divergence) {
+                    Text(
+                        text = "Bank Tk ${String.format(Locale.US, "%,.2f", summary.latestBalance)} · " +
+                            "Ledger Tk ${String.format(Locale.US, "%,.2f", summary.computedBalance)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
             }
-            Text(
-                text = String.format(Locale.US, "Tk %,.2f", balance),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = StatusSafe
-            )
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = String.format(Locale.US, "Tk %,.2f", balance),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = StatusSafe
+                )
+                Text(
+                    text = when {
+                        net > 0.005 -> "Income"
+                        net < -0.005 -> "Spend"
+                        else -> "Stable"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = netColor,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun ArchivedAccountRow(
+    account: Account,
+    onRestore: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = accountIcon(account.kind),
+                contentDescription = account.kind,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(28.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = account.displayName,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+            TextButton(onClick = onRestore) { Text("Restore") }
+        }
+    }
+}
+
+@Composable
+private fun SearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = modifier
+            .fillMaxWidth(),
+        placeholder = { Text("Search…", style = MaterialTheme.typography.bodySmall, maxLines = 1) },
+        singleLine = true,
+        shape = RoundedCornerShape(10.dp),
+        textStyle = MaterialTheme.typography.bodySmall,
+        leadingIcon = {
+            Icon(Icons.Filled.Search, contentDescription = "Search", modifier = Modifier.size(18.dp))
+        },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(Icons.Filled.Close, contentDescription = "Clear search")
+                }
+            }
+        }
+    )
 }

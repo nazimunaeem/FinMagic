@@ -221,4 +221,67 @@ class SmsTeachingEngineTest {
         val result = findMatch(listOf(rule2, rule1), "16216", "Tk 100 account update")
         assertNotNull(result)
     }
+
+    // --- Field Extraction (Phase 3) ---
+
+    @Test
+    fun extractAllFields_extractsAmountAndMaskAndBalance() {
+        val body = "Tk 1,500.00 debited from A/C ***1234. Balance: Tk 5,000.00"
+        val extracted = SmsTeachingEngine.extractAllFields(body)
+        assertEquals(1500.00, extracted.amount!!, 0.01)
+        assertEquals(5000.00, extracted.balance!!, 0.01)
+        assertEquals("A/C ***1234", extracted.accountMask)
+    }
+
+    @Test
+    fun generatePattern_safelyEscapesAndCapturesSpan() {
+        val text = "Tk 1,250.00 debited from A/C ***1234"
+        val span = "1,250.00"
+        val pattern = SmsTeachingEngine.generatePattern(text, span, "amount")
+        assertNotNull(pattern)
+        assert(pattern!!.contains("(?<amount>\\Q1,250.00\\E)"))
+    }
+
+    // --- JSON keyword storage (plan §3) ---
+
+    @Test
+    fun findBestMatch_jsonRequiredKeywords_matches() {
+        val rule = makeRule(senderKey = "16216", requiredKeywords = """["debited"]""")
+        val result = findMatch(listOf(rule), "16216", "Tk 100 debited from account")
+        assertNotNull(result)
+    }
+
+    @Test
+    fun findBestMatch_jsonRequiredKeywords_missingFails() {
+        val rule = makeRule(senderKey = "16216", requiredKeywords = """["credited"]""")
+        val result = findMatch(listOf(rule), "16216", "Tk 100 debited from account")
+        assertNull(result)
+    }
+
+    @Test
+    fun findBestMatch_jsonExcludedKeywords_presentFails() {
+        val rule = makeRule(
+            senderKey = "16216",
+            requiredKeywords = """["account"]""",
+            excludedKeywords = """["OTP"]"""
+        )
+        val result = findMatch(listOf(rule), "16216", "Your OTP is 123456 for account")
+        assertNull(result)
+    }
+
+    @Test
+    fun findBestMatch_dangerousBroadRule_returnsNull() {
+        // No sender, no required keywords => would match every SMS (plan §3.2).
+        val rule = makeRule(requiredKeywords = com.finmagic.data.local.KeywordJson.encode(emptyList()))
+        val result = findMatch(listOf(rule), "16216", "any random body")
+        assertNull(result)
+    }
+
+    @Test
+    fun findBestMatch_broadRuleWithKeyword_stillApplies() {
+        // A body-only rule WITH keywords is specific enough to apply.
+        val rule = makeRule(requiredKeywords = """["debited"]""")
+        val result = findMatch(listOf(rule), null, "Tk 100 debited from account")
+        assertNotNull(result)
+    }
 }

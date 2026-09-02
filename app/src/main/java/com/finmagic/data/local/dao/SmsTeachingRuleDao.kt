@@ -33,6 +33,9 @@ interface SmsTeachingRuleDao {
     @Query("UPDATE sms_teaching_rules SET enabled = 0")
     suspend fun disableAll()
 
+    @Query("UPDATE sms_teaching_rules SET enabled = 1")
+    suspend fun enableAll()
+
     @Query("DELETE FROM sms_teaching_rules WHERE id = :id")
     suspend fun deleteById(id: Long)
 

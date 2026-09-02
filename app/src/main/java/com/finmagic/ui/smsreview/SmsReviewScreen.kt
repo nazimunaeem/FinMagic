@@ -1,24 +1,27 @@
 package com.finmagic.ui.smsreview
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.finmagic.data.local.entity.Account
 import com.finmagic.data.local.entity.AccountTransaction
 import com.finmagic.data.local.entity.SmsRecord
 import com.finmagic.data.local.entity.SmsTeachingRule
+import com.finmagic.ui.theme.StatusSafe
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -31,10 +34,13 @@ fun SmsReviewScreen(
 ) {
     val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
     val unparsedSms by viewModel.unparsedSms.collectAsStateWithLifecycle()
+    val allSms by viewModel.allSms.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
+    val creditCards by viewModel.creditCards.collectAsStateWithLifecycle()
     val rules by viewModel.rules.collectAsStateWithLifecycle()
     val selectedRecord by viewModel.selectedRecord.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
+    var showRuleTest by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -53,6 +59,11 @@ fun SmsReviewScreen(
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, "Back")
                     }
+                },
+                actions = {
+                    IconButton(onClick = { showRuleTest = true }) {
+                        Icon(Icons.Default.Search, contentDescription = "Test Rules")
+                    }
                 }
             )
         },
@@ -60,6 +71,11 @@ fun SmsReviewScreen(
     ) { padding ->
         Column(modifier = Modifier.padding(padding)) {
             TabRow(selectedTabIndex = selectedTab.ordinal) {
+                Tab(
+                    selected = selectedTab == ReviewTab.ALL,
+                    onClick = { viewModel.selectTab(ReviewTab.ALL) },
+                    text = { Text("All (${allSms.size})") }
+                )
                 Tab(
                     selected = selectedTab == ReviewTab.UNPARSED,
                     onClick = { viewModel.selectTab(ReviewTab.UNPARSED) },
@@ -73,6 +89,28 @@ fun SmsReviewScreen(
             }
 
             when (selectedTab) {
+                ReviewTab.ALL -> {
+                    if (allSms.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "No SMS records",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(allSms, key = { it.id }) { record ->
+                                AllSmsItem(
+                                    record = record,
+                                    onTap = { viewModel.selectRecord(record) }
+                                )
+                            }
+                        }
+                    }
+                }
                 ReviewTab.UNPARSED -> {
                     if (unparsedSms.isEmpty()) {
                         Box(
@@ -86,7 +124,7 @@ fun SmsReviewScreen(
                         }
                     } else {
                         LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            items(unparsedSms) { record ->
+                            items(unparsedSms, key = { it.id }) { record ->
                                 UnparsedSmsItem(
                                     record = record,
                                     onTap = { viewModel.selectRecord(record) },
@@ -101,31 +139,53 @@ fun SmsReviewScreen(
                         rules = rules,
                         onToggle = { viewModel.toggleRule(it) },
                         onDelete = { viewModel.deleteRule(it) },
-                        onDisableAll = { viewModel.disableAllRules() }
+                        onDisableAll = { viewModel.disableAllRules() },
+                        onEnableAll = { viewModel.enableAllRules() },
+                        onApplyHistorical = { viewModel.applyRuleToHistorical(it) }
                     )
                 }
             }
         }
     }
 
+    if (showRuleTest) {
+        RuleTestScreen(
+            rules = rules,
+            onDismiss = { showRuleTest = false }
+        )
+    }
+
     selectedRecord?.let { record ->
         TeachSmsSheet(
             record = record,
             accounts = accounts,
+            creditCards = creditCards,
             onDismiss = { viewModel.selectRecord(null) },
-            onTeachCredit = { accountId, amount, occurredAt, counterparty, category, saveRule, req, exc ->
-                viewModel.teachSms(record, accountId, AccountTransaction.DIRECTION_IN, amount, occurredAt, counterparty, category, saveRule, req, exc)
+            onTeachCredit = { accountId, amount, occurredAt, counterparty, category, balanceAfter, saveRule, req, exc ->
+                viewModel.teachSms(record, accountId, AccountTransaction.DIRECTION_IN, amount, occurredAt, counterparty, category, balanceAfter, saveRule, req, exc)
             },
-            onTeachDebit = { accountId, amount, occurredAt, counterparty, category, saveRule, req, exc ->
-                viewModel.teachSms(record, accountId, AccountTransaction.DIRECTION_OUT, amount, occurredAt, counterparty, category, saveRule, req, exc)
+            onTeachDebit = { accountId, amount, occurredAt, counterparty, category, balanceAfter, saveRule, req, exc ->
+                viewModel.teachSms(record, accountId, AccountTransaction.DIRECTION_OUT, amount, occurredAt, counterparty, category, balanceAfter, saveRule, req, exc)
+            },
+            onTeachTransfer = { fromAccountId, toAccountId, amount, occurredAt, saveRule, req, exc ->
+                viewModel.teachTransfer(record, fromAccountId, toAccountId, amount, occurredAt, saveRule, req, exc)
             },
             onTeachAtm = { accountId, amount, occurredAt, saveRule, req, exc ->
                 viewModel.teachAtmWithdrawal(record, accountId, amount, occurredAt, saveRule, req, exc)
             },
+            onTeachBalanceOnly = { accountId, balance, occurredAt, saveRule, req, exc ->
+                viewModel.teachBalanceOnly(record, accountId, balance, occurredAt, saveRule, req, exc)
+            },
+            onTeachCreateBill = { cardId, totalDue, minDue, dueDate, billPeriod, occurredAt, saveRule, req, exc ->
+                viewModel.teachCreateBill(record, cardId, totalDue, minDue, dueDate, billPeriod, occurredAt, saveRule, req, exc)
+            },
+            onTeachBillPaid = { cardId, amount, occurredAt, saveRule, req, exc ->
+                viewModel.teachBillPaid(record, cardId, amount, occurredAt, saveRule, req, exc)
+            },
             onIgnore = { viewModel.ignoreSms(record) },
-            onIgnoreSimilar = { viewModel.ignoreSimilar(record.address) },
-            onCreateAccount = { name, kind, bankName, mask, currency, includeInTotal ->
-                viewModel.createAccount(name, kind, bankName, mask, currency, includeInTotal) { }
+            onBlockSender = { viewModel.ignoreSimilar(record.address) },
+            onCreateAccount = { name, kind, bankName, mask, currency, includeInTotal, onCreated ->
+                viewModel.createAccount(name, kind, bankName, mask, currency, includeInTotal, onCreated)
             }
         )
     }
@@ -174,13 +234,75 @@ private fun UnparsedSmsItem(
 }
 
 @Composable
+private fun AllSmsItem(
+    record: SmsRecord,
+    onTap: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onTap)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(
+                        if (record.isParsed) StatusSafe else MaterialTheme.colorScheme.error
+                    )
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = record.address ?: "Unknown",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = if (record.isParsed) StatusSafe.copy(alpha = 0.12f) else MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
+            ) {
+                Text(
+                    text = if (record.isParsed) "Parsed" else "Unparsed",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (record.isParsed) StatusSafe else MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault()).format(Date(record.timestamp)),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = record.body,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(start = 16.dp)
+        )
+        HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
+    }
+}
+
+@Composable
 private fun RulesList(
     rules: List<SmsTeachingRule>,
     onToggle: (SmsTeachingRule) -> Unit,
     onDelete: (SmsTeachingRule) -> Unit,
-    onDisableAll: () -> Unit
+    onDisableAll: () -> Unit,
+    onEnableAll: () -> Unit,
+    onApplyHistorical: (SmsTeachingRule) -> Unit
 ) {
     var showDeleteConfirm by remember { mutableStateOf<SmsTeachingRule?>(null) }
+    var showDisableAllConfirm by remember { mutableStateOf(false) }
+    var showApplyHistoricalConfirm by remember { mutableStateOf<SmsTeachingRule?>(null) }
 
     if (rules.isEmpty()) {
         Box(
@@ -194,6 +316,7 @@ private fun RulesList(
         }
     } else {
         Column {
+            val allEnabled = rules.all { it.enabled }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -206,16 +329,28 @@ private fun RulesList(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                TextButton(onClick = onDisableAll) {
-                    Text("Disable all")
+                Row {
+                    if (allEnabled) {
+                        TextButton(onClick = { showDisableAllConfirm = true }) {
+                            Text("Disable all")
+                        }
+                    } else {
+                        TextButton(onClick = onEnableAll) {
+                            Text("Enable all")
+                        }
+                        TextButton(onClick = { showDisableAllConfirm = true }) {
+                            Text("Disable all")
+                        }
+                    }
                 }
             }
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(rules) { rule ->
+                items(rules, key = { it.id }) { rule ->
                     RuleItem(
                         rule = rule,
                         onToggle = { onToggle(rule) },
-                        onDelete = { showDeleteConfirm = rule }
+                        onDelete = { showDeleteConfirm = rule },
+                        onApplyHistorical = { showApplyHistoricalConfirm = rule }
                     )
                 }
             }
@@ -238,13 +373,48 @@ private fun RulesList(
             }
         )
     }
+
+    if (showDisableAllConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDisableAllConfirm = false },
+            title = { Text("Disable all rules?") },
+            text = { Text("All rules will be disabled. No SMS will be automatically matched until rules are re-enabled.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDisableAll()
+                    showDisableAllConfirm = false
+                }) { Text("Disable all") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDisableAllConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    showApplyHistoricalConfirm?.let { rule ->
+        AlertDialog(
+            onDismissRequest = { showApplyHistoricalConfirm = null },
+            title = { Text("Apply to past SMS?") },
+            text = { Text("This will create transactions for all unparsed SMS that match \"${rule.name}\". This action cannot be easily undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onApplyHistorical(rule)
+                    showApplyHistoricalConfirm = null
+                }) { Text("Apply") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showApplyHistoricalConfirm = null }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 @Composable
 private fun RuleItem(
     rule: SmsTeachingRule,
     onToggle: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onApplyHistorical: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -273,21 +443,25 @@ private fun RuleItem(
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = rule.actionLabel,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary
             )
-            Row {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 if (rule.matchCount > 0) {
                     Text(
                         text = "Matched ${rule.matchCount}×",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(end = 12.dp)
+                        modifier = Modifier.padding(end = 8.dp)
                     )
+                }
+                TextButton(onClick = onApplyHistorical) {
+                    Text("Apply to past SMS", style = MaterialTheme.typography.labelSmall)
                 }
                 IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
                     Icon(

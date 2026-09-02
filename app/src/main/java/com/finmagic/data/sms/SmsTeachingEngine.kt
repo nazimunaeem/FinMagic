@@ -25,6 +25,15 @@ import javax.inject.Singleton
  * Built-in parsers keep precedence (they run before this engine in SmsScanWorker).
  */
 @Singleton
+/** Field extraction data class */
+data class ExtractedFields(
+    val amount: Double? = null,
+    val date: Long? = null,
+    val balance: Double? = null,
+    val accountMask: String? = null,
+    val counterparty: String? = null
+)
+
 class SmsTeachingEngine @Inject constructor(
     private val ruleDao: SmsTeachingRuleDao,
     private val ruleApplicationDao: SmsRuleApplicationDao,
@@ -55,6 +64,31 @@ class SmsTeachingEngine @Inject constructor(
     }
 
     /**
+     * Applies a specific [rule] to all matching unparsed [unparsedRecords].
+     * Returns the count of records that were successfully processed and applied.
+     */
+    suspend fun applyRuleToHistorical(rule: SmsTeachingRule, unparsedRecords: List<SmsRecord>): Int {
+        var appliedCount = 0
+        for (record in unparsedRecords) {
+            val normalizedBody = normalizeText(record.body)
+            val sender = record.address?.trim()?.uppercase()
+            if (matchesRule(rule, sender, normalizedBody)) {
+                if (applyRule(rule, record)) {
+                    ruleDao.incrementMatchCount(rule.id)
+                    ruleApplicationDao.insert(
+                        SmsRuleApplication(
+                            ruleId = rule.id,
+                            smsRecordId = record.id
+                        )
+                    )
+                    appliedCount++
+                }
+            }
+        }
+        return appliedCount
+    }
+
+    /**
      * Finds the best matching rule using specificity scoring (plan §3.2).
      * Returns null if no rule matches or if two rules conflict.
      */
@@ -82,59 +116,66 @@ class SmsTeachingEngine @Inject constructor(
     }
 
     private suspend fun applyRule(rule: SmsTeachingRule, record: SmsRecord): Boolean {
+        // Extract fields using rule patterns if available, fall back to generic extraction
+        val extracted = extractFieldsWithPatterns(rule, record.body)
+        
         return when (rule.action) {
             SmsTeachingRule.ACTION_IGNORE -> true
 
             SmsTeachingRule.ACTION_CREDIT -> {
-                val amount = extractAmount(record.body) ?: return false
+                val amount = extracted.amount ?: return false
                 accountRepository.storeManualToAccount(
                     accountId = rule.accountId,
                     direction = AccountTransaction.DIRECTION_IN,
                     amount = amount,
-                    occurredAt = record.timestamp,
+                    occurredAt = extracted.date ?: record.timestamp,
                     category = rule.category ?: "Manual",
-                    counterparty = "Taught SMS",
+                    counterparty = extracted.counterparty ?: "Taught SMS",
                     smsBody = record.body,
-                    smsRecordId = record.id
-                )
+                    smsRecordId = record.id,
+                    balanceAfter = extracted.balance
+                ) != null
             }
 
             SmsTeachingRule.ACTION_DEBIT -> {
-                val amount = extractAmount(record.body) ?: return false
+                val amount = extracted.amount ?: return false
                 accountRepository.storeManualToAccount(
                     accountId = rule.accountId,
                     direction = AccountTransaction.DIRECTION_OUT,
                     amount = amount,
-                    occurredAt = record.timestamp,
+                    occurredAt = extracted.date ?: record.timestamp,
                     category = rule.category ?: "Manual",
-                    counterparty = "Taught SMS",
+                    counterparty = extracted.counterparty ?: "Taught SMS",
                     smsBody = record.body,
-                    smsRecordId = record.id
-                )
+                    smsRecordId = record.id,
+                    balanceAfter = extracted.balance
+                ) != null
             }
 
             SmsTeachingRule.ACTION_ATM_WITHDRAWAL -> {
-                val amount = extractAmount(record.body) ?: return false
+                val amount = extracted.amount ?: return false
                 val entry = LedgerEntry(
                     institution = "",
                     kind = AccountKind.BANK,
                     accountMask = "",
                     direction = LedgerDirection.OUT,
                     amount = amount,
-                    occurredAt = record.timestamp
+                    occurredAt = extracted.date ?: record.timestamp,
+                    balanceAfter = extracted.balance
                 )
-                accountRepository.storeAtmWithdraw(entry, record.body, record.id)
+                accountRepository.storeAtmWithdraw(entry, record.body, record.id) != null
             }
 
             SmsTeachingRule.ACTION_TRANSFER -> {
-                val amount = extractAmount(record.body) ?: return false
+                val amount = extracted.amount ?: return false
                 val fromEntry = LedgerEntry(
                     institution = "",
                     kind = AccountKind.BANK,
                     accountMask = "",
                     direction = LedgerDirection.OUT,
                     amount = amount,
-                    occurredAt = record.timestamp
+                    occurredAt = extracted.date ?: record.timestamp,
+                    balanceAfter = extracted.balance
                 )
                 val toEntry = LedgerEntry(
                     institution = "",
@@ -142,9 +183,10 @@ class SmsTeachingEngine @Inject constructor(
                     accountMask = "CASH",
                     direction = LedgerDirection.IN,
                     amount = amount,
-                    occurredAt = record.timestamp
+                    occurredAt = extracted.date ?: record.timestamp,
+                    balanceAfter = extracted.balance
                 )
-                accountRepository.storeTransferPair(fromEntry, toEntry, record.body, record.id)
+                accountRepository.storeTransferPair(fromEntry, toEntry, record.body, record.id) != null
             }
 
             SmsTeachingRule.ACTION_BALANCE_ONLY -> {
@@ -186,15 +228,6 @@ class SmsTeachingEngine @Inject constructor(
             RegexOption.IGNORE_CASE
         )
 
-        /** Field extraction data class */
-        data class ExtractedFields(
-            val amount: Double? = null,
-            val date: Long? = null,
-            val balance: Double? = null,
-            val accountMask: String? = null,
-            val counterparty: String? = null
-        )
-
         fun extractAmount(body: String): Double? {
             return amountRegex.find(body)?.groupValues?.get(1)
                 ?.replace(",", "")
@@ -220,26 +253,60 @@ class SmsTeachingEngine @Inject constructor(
         }
         
         private fun parseDate(dateStr: String): Long? {
-            return try {
-                // Try multiple date formats
-                val formats = listOf(
-                    "dd/MM/yyyy",
-                    "dd-MM-yyyy", 
-                    "dd/MM/yy",
-                    "dd-MM-yy"
-                )
-                
-                for (format in formats) {
-                    try {
-                        val sdf = java.text.SimpleDateFormat(format, java.util.Locale.getDefault())
-                        sdf.parse(dateStr)?.time
-                    } catch (e: Exception) {
-                        null
-                    }
-                } ?: null
-            } catch (e: Exception) {
-                null
+            val formats = listOf(
+                "dd/MM/yyyy",
+                "dd-MM-yyyy",
+                "dd/MM/yy",
+                "dd-MM-yy",
+                "yyyy-MM-dd"
+            )
+
+            return formats.firstNotNullOfOrNull { format ->
+                try {
+                    val sdf = java.text.SimpleDateFormat(format, java.util.Locale.getDefault())
+                    sdf.parse(dateStr)?.time
+                } catch (e: Exception) {
+                    null
+                }
             }
+        }
+        
+        /**
+         * Extracts a value from body using a custom regex pattern.
+         * Expects a named capture group matching the field name, or falls back to first capture group.
+         */
+        private fun extractByPattern(body: String, pattern: String, fieldName: String): String? {
+            return try {
+                val regex = Regex(pattern, RegexOption.IGNORE_CASE)
+                regex.find(body)?.let { match ->
+                    // Try named capture group first
+                    match.groups[fieldName]?.value ?: match.groupValues.getOrNull(1)
+                }
+            } catch (_: Exception) { null }
+        }
+        
+        /**
+         * Extracts fields from SMS body using rule-specific patterns if available,
+         * otherwise falls back to generic extraction patterns.
+         */
+        fun extractFieldsWithPatterns(rule: SmsTeachingRule, body: String): ExtractedFields {
+            // Try rule-specific patterns first
+            val amount = rule.amountPattern?.let { extractByPattern(body, it, "amount")?.replace(",", "")?.toDoubleOrNull() }
+                ?: extractAmount(body)
+            
+            val date = rule.datePattern?.let { extractByPattern(body, it, "date")?.let { parseDate(it) } }
+                ?: extractAllFields(body).date
+            
+            val balance = rule.balancePattern?.let { extractByPattern(body, it, "balance")?.replace(",", "")?.toDoubleOrNull() }
+                ?: extractAllFields(body).balance
+            
+            val accountMask = rule.accountMaskPattern?.let { extractByPattern(body, it, "accountMask") }
+                ?: extractAllFields(body).accountMask
+            
+            val counterparty = rule.counterpartyPattern?.let { extractByPattern(body, it, "counterparty") }
+                ?: extractAllFields(body).counterparty
+            
+            return ExtractedFields(amount, date, balance, accountMask, counterparty)
         }
         
         /**
@@ -308,9 +375,10 @@ class SmsTeachingEngine @Inject constructor(
             if (rule.senderKey?.isNotBlank() == true) {
                 if (sender == null || !sender.contains(rule.senderKey.uppercase())) return false
             }
-            val required = rule.requiredKeywords.split('|').map { it.trim() }.filter { it.isNotEmpty() }
+            // Use JSON-decoded keyword lists (Plan §3)
+            val required = rule.requiredKeywordsList
             if (required.any { !normalizedBody.contains(it, ignoreCase = true) }) return false
-            val excluded = rule.excludedKeywords.split('|').map { it.trim() }.filter { it.isNotEmpty() }
+            val excluded = rule.excludedKeywordsList
             if (excluded.any { normalizedBody.contains(it, ignoreCase = true) }) return false
             return true
         }
@@ -318,7 +386,8 @@ class SmsTeachingEngine @Inject constructor(
         private fun scoreRule(rule: SmsTeachingRule, sender: String?): Int {
             var score = 0
             if (rule.senderKey?.isNotBlank() == true && sender != null) score += 100
-            val required = rule.requiredKeywords.split('|').map { it.trim() }.filter { it.isNotEmpty() }
+            // Use JSON-decoded keyword lists (Plan §3)
+            val required = rule.requiredKeywordsList
             score += required.size * 10
             score += rule.priority
             return score

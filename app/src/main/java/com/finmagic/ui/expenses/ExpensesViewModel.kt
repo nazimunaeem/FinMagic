@@ -2,12 +2,15 @@ package com.finmagic.ui.expenses
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.finmagic.data.local.PreferenceManager
 import com.finmagic.data.repository.ExpenseItem
 import com.finmagic.data.repository.ExpenseRepository
 import com.finmagic.data.repository.ExpenseStats
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -23,10 +26,12 @@ data class ExpensesUiState(
 
 @HiltViewModel
 class ExpensesViewModel @Inject constructor(
-    private val repository: ExpenseRepository
+    private val repository: ExpenseRepository,
+    private val preferenceManager: PreferenceManager
 ) : ViewModel() {
 
     private val calendar = Calendar.getInstance()
+    private val defaultYears = (calendar.get(Calendar.YEAR) downTo 2020).toList()
 
     private val _uiState = MutableStateFlow(
         ExpensesUiState(
@@ -36,11 +41,24 @@ class ExpensesViewModel @Inject constructor(
     )
     val uiState: StateFlow<ExpensesUiState> = _uiState
 
-    val availableYears: List<Int> =
-        (calendar.get(Calendar.YEAR) downTo 2020).toList()
+    /** Years selectable in the picker, most recent first. Seeded lazily from real data. */
+    private val _availableYears = MutableStateFlow(defaultYears)
+    val availableYears: StateFlow<List<Int>> = _availableYears
+
+    val categoryNicknames: StateFlow<Map<String, String>> =
+        preferenceManager.categoryNicknames
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     init {
         load()
+        viewModelScope.launch {
+            repository.earliestYear()?.let { earliest ->
+                val years = (calendar.get(Calendar.YEAR) downTo earliest).toList()
+                if (years != _availableYears.value) {
+                    _availableYears.value = years
+                }
+            }
+        }
     }
 
     fun setMonth(year: Int, month: Int) {
@@ -58,7 +76,7 @@ class ExpensesViewModel @Inject constructor(
     fun stepNext() {
         val now = Calendar.getInstance()
         val (y, m) = with(_uiState.value) {
-            if (month == 12) year + 1 to 1 else year to month + 1
+            if (month == 12) year + 1 to 1 else year to month - 1
         }
         if (y > now.get(Calendar.YEAR) || (y == now.get(Calendar.YEAR) && m > now.get(Calendar.MONTH) + 1)) return
         setMonth(y, m)
@@ -69,6 +87,10 @@ class ExpensesViewModel @Inject constructor(
             repository.setExpenseOverride(accountTxnId, value)
             load()
         }
+    }
+
+    fun refresh() {
+        load()
     }
 
     private fun monthRange(year: Int, month: Int): Pair<Long, Long> {

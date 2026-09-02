@@ -49,28 +49,6 @@ class SmsScanWorker @AssistedInject constructor(
         // ("sms_scan_now") use different WorkManager unique names and could otherwise
         // run at the same time, parsing the same SMS twice.
         private val scanMutex = kotlinx.coroutines.sync.Mutex()
-
-        /** Card activation SMS: create a CreditCard but treat as noise (no financial data). */
-        private val activationPattern = Regex(
-            """(?:your\s+)?(?:credit\s+)?card\s+(?:no\.?\s*)?[\d*]+\s+(?:has\s+been\s+)?activat""",
-            RegexOption.IGNORE_CASE
-        )
-
-        private val cardTailFromActivation = Regex("""\*{2,}(\d{4})""")
-
-        private fun parseActivation(body: String): Pair<String, String>? {
-            val m = activationPattern.find(body) ?: return null
-            val tail = cardTailFromActivation.find(body)?.groupValues?.get(1) ?: return null
-            val bankName = when {
-                body.uppercase().contains("EBL") -> "EBL"
-                body.uppercase().contains("CITY") || body.uppercase().contains("AMEX") -> "City Bank"
-                body.uppercase().contains("BRAC") -> "BRAC Bank"
-                body.uppercase().contains("PUBALI") -> "Pubali Bank"
-                body.uppercase().contains("PRIME") -> "Prime Bank"
-                else -> return null
-            }
-            return bankName to tail
-        }
     }
 
     override suspend fun doWork(): Result {
@@ -227,10 +205,8 @@ class SmsScanWorker @AssistedInject constructor(
                 }
             }
             is SmsClassification.Noise -> {
-                // Card activation notices are noise but should auto-create the credit card.
-                parseActivation(message.body)?.let { (bankName, tail) ->
-                    ensureCreditCardExists(bankName, tail)
-                }
+                // Card activation notices are noise - don't auto-create credit card
+                // to avoid creating cards without bill history.
             }
         }
 
@@ -261,7 +237,8 @@ class SmsScanWorker @AssistedInject constructor(
     }
 
     private suspend fun storeCardPayment(payment: ParsedPayment, message: SmsMessage) {
-        ensureCreditCardExists(payment.bankName, payment.cardTail)
+        // Don't auto-create CreditCard from payment alone - only from bill statements.
+        // The payment will still be recorded and linked when a bill arrives.
         val inserted = cardPaymentDao.insert(
             CardPayment(
                 cardTail = payment.cardTail,
@@ -281,7 +258,7 @@ class SmsScanWorker @AssistedInject constructor(
     }
 
     private suspend fun storeCardTransaction(txn: SmsClassification.CardTxn, message: SmsMessage) {
-        ensureCreditCardExists(txn.bankName, txn.cardTail)
+        // Don't auto-create CreditCard from POS transaction alone - only from bill statements.
         val inserted = cardTransactionDao.insert(
             CardTransaction(
                 cardTail = txn.cardTail,
@@ -304,22 +281,12 @@ class SmsScanWorker @AssistedInject constructor(
         }
     }
 
-    /** Auto-create a CreditCard record if one doesn't exist for the given bank+tail. */
-    private suspend fun ensureCreditCardExists(bankName: String?, cardTail: String) {
-        if (bankName.isNullOrBlank() || cardTail.isBlank()) return
-        val existing = cardDao.findCardFlexible(bankName, cardTail)
-        if (existing == null) {
-            activityLogger.info(TAG, "Auto-discovered card: $bankName •••• $cardTail")
-            cardDao.insertCard(
-                CreditCard(
-                    bankName = bankName,
-                    cardLast4 = cardTail
-                )
-            )
-        }
-    }
-
     private suspend fun storeBill(parsed: ParsedBill, message: SmsMessage): ParsedBill? {
+        if (parsed.totalDue <= 0.0 && parsed.minDue <= 0.0) {
+            activityLogger.info(TAG, "Skipping zero-balance bill for ${parsed.bankName} •••• ${parsed.cardLast4}")
+            return parsed
+        }
+
         var card = cardDao.findCard(parsed.bankName, parsed.cardLast4)
         if (card == null) {
             activityLogger.info(TAG, "New card: ${parsed.bankName} •••• ${parsed.cardLast4}")

@@ -1,6 +1,8 @@
 package com.finmagic.ui.creditcards
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -40,8 +42,8 @@ fun CardDetailScreen(
 ) {
     val card by viewModel.card.collectAsStateWithLifecycle()
     val bills by viewModel.bills.collectAsStateWithLifecycle()
-    val totalPaid by viewModel.totalPaid.collectAsStateWithLifecycle()
-    val totalUnpaid by viewModel.totalUnpaid.collectAsStateWithLifecycle()
+    val paidTotals by viewModel.paidTotals.collectAsStateWithLifecycle()
+    val unpaidTotals by viewModel.unpaidTotals.collectAsStateWithLifecycle()
     val payments by viewModel.payments.collectAsStateWithLifecycle()
 
     var showEditDialog by remember { mutableStateOf(false) }
@@ -96,8 +98,8 @@ fun CardDetailScreen(
             item {
                 CardSummaryHeader(
                     card = card,
-                    totalPaid = totalPaid,
-                    totalUnpaid = totalUnpaid,
+                    paidTotals = paidTotals,
+                    unpaidTotals = unpaidTotals,
                     totalBills = bills.size
                 )
             }
@@ -197,8 +199,8 @@ fun CardDetailScreen(
         EditCardDialog(
             card = card!!,
             onDismiss = { showEditDialog = false },
-            onConfirm = { nickname ->
-                viewModel.updateNickname(card!!, nickname)
+            onConfirm = { nickname, creditLimit, currency ->
+                viewModel.updateCardDetails(card!!, nickname, creditLimit, currency)
                 showEditDialog = false
             },
             onDeleteRequest = {
@@ -238,13 +240,30 @@ fun CardDetailScreen(
     }
 }
 
+private fun formatCurrencies(totals: Map<String, Double>): String {
+    if (totals.isEmpty()) return "৳0.00"
+    return totals.entries.joinToString(" + ") { (currency, amount) ->
+        val symbol = when (currency.uppercase()) {
+            "USD" -> "$"
+            "BDT", "TK" -> "৳"
+            else -> currency
+        }
+        "$symbol${String.format(Locale.US, "%,.2f", amount)}"
+    }
+}
+
 @Composable
 private fun CardSummaryHeader(
     card: CreditCard?,
-    totalPaid: Double,
-    totalUnpaid: Double,
+    paidTotals: Map<String, Double>,
+    unpaidTotals: Map<String, Double>,
     totalBills: Int
 ) {
+    val totalUnpaid = unpaidTotals.values.sum()
+    val utilization = if (card != null && card.creditLimit > 0) {
+        (totalUnpaid / card.creditLimit).coerceIn(0.0, 1.0)
+    } else null
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -258,15 +277,15 @@ private fun CardSummaryHeader(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Total Paid",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                     )
                     Text(
-                        text = String.format(Locale.US, "Tk %,.2f", totalPaid),
-                        style = MaterialTheme.typography.headlineMedium,
+                        text = formatCurrencies(paidTotals),
+                        style = if (formatCurrencies(paidTotals).length > 14) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
@@ -291,7 +310,8 @@ private fun CardSummaryHeader(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
                     Text(
@@ -300,7 +320,7 @@ private fun CardSummaryHeader(
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                     )
                     Text(
-                        text = String.format(Locale.US, "Tk %,.2f", totalUnpaid),
+                        text = formatCurrencies(unpaidTotals),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = if (totalUnpaid > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
@@ -319,6 +339,60 @@ private fun CardSummaryHeader(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
+                }
+            }
+
+            if (card != null && card.creditLimit > 0) {
+                val utilizationValue = utilization?.coerceIn(0.0, 1.0) ?: 0.0
+                Spacer(modifier = Modifier.height(14.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.4f)
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Credit Limit Usage",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "${card.limitSymbol()}${String.format(Locale.US, "%,.0f", card.creditLimit)} • ${(utilizationValue * 100).toInt()}% used",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        LinearProgressIndicator(
+                            progress = { utilizationValue.toFloat() },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)),
+                            color = if (utilizationValue > 0.8) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = if (totalUnpaid > 0) {
+                                "${card.limitSymbol()}${String.format(Locale.US, "%,.2f", card.creditLimit - totalUnpaid)} available"
+                            } else {
+                                "Full limit available"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (utilizationValue > 0.8) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        )
+                    }
                 }
             }
         }
@@ -414,16 +488,21 @@ private fun PaymentHistoryCard(
 fun EditCardDialog(
     card: CreditCard,
     onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
+    onConfirm: (nickname: String, creditLimit: Double, currency: String) -> Unit,
     onDeleteRequest: () -> Unit
 ) {
     var nickname by remember(card.id) { mutableStateOf(card.cardNickname) }
+    var limit by remember(card.id) { mutableStateOf(if (card.creditLimit > 0) card.creditLimit.toString() else "") }
+    var currency by remember(card.id) { mutableStateOf(card.creditLimitCurrency) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit Credit Card") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
                 OutlinedTextField(
                     value = nickname,
                     onValueChange = { nickname = it },
@@ -432,6 +511,34 @@ fun EditCardDialog(
                     placeholder = { Text("${card.bankName} •••• ${card.cardLast4}") },
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                OutlinedTextField(
+                    value = limit,
+                    onValueChange = { limit = it },
+                    label = { Text("Credit Limit") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Limit Currency",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = currency == "BDT",
+                        onClick = { currency = "BDT" },
+                        label = { Text("৳ BDT") }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    FilterChip(
+                        selected = currency == "USD",
+                        onClick = { currency = "USD" },
+                        label = { Text("$ USD") }
+                    )
+                }
 
                 TextButton(
                     onClick = onDeleteRequest,
@@ -449,7 +556,10 @@ fun EditCardDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(nickname) }) {
+            TextButton(onClick = {
+                val parsedLimit = limit.replace(",", "").toDoubleOrNull() ?: 0.0
+                onConfirm(nickname, parsedLimit, currency)
+            }) {
                 Text("Save")
             }
         },

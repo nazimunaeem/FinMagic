@@ -18,6 +18,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
@@ -41,13 +43,14 @@ import com.finmagic.ui.accounts.AccountsScreen
 import com.finmagic.ui.accounts.MyAccountsScreen
 import com.finmagic.ui.creditcards.CardDetailScreen
 import com.finmagic.ui.creditcards.CreditCardsScreen
-import com.finmagic.ui.debug.DebugScreen
 import com.finmagic.ui.expenses.ExpensesScreen
+import com.finmagic.ui.home.HomeScreen
 import com.finmagic.ui.navigation.Screen
 import com.finmagic.ui.settings.CategoriesScreen
 import com.finmagic.ui.navigation.bottomNavScreens
 import com.finmagic.ui.settings.SettingsScreen
 import com.finmagic.ui.smsreview.SmsReviewScreen
+import com.finmagic.ui.stats.StatsScreen
 import com.finmagic.ui.theme.FinMagicTheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -63,7 +66,7 @@ class MainActivity : ComponentActivity() {
         val allGranted = permissions.values.all { it }
         if (allGranted) {
             SmsScheduler.schedule(this)
-            SmsScheduler.scanNow(this)
+            SmsScheduler.scanNow(this, force = true)
             lifecycleScope.launch {
                 DueDateReminderScheduler.schedule(this@MainActivity, preferenceManager)
             }
@@ -108,7 +111,7 @@ class MainActivity : ComponentActivity() {
             requestPermissionLauncher.launch(permissions.toTypedArray())
         } else {
             SmsScheduler.schedule(this)
-            SmsScheduler.scanNow(this)
+            SmsScheduler.scanNow(this, force = true)
             lifecycleScope.launch {
                 DueDateReminderScheduler.schedule(this@MainActivity, preferenceManager)
             }
@@ -124,9 +127,9 @@ fun MainApp() {
 
     // Sub-tab selection per section, hoisted here so it survives being covered by
     // detail screens (back restores it), while a bottom-bar tap force-resets it to
-    // the default sub-tab (Accounts → History, Cards → Dashboard).
-    var accountsInitialTab by androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(0) }
-    var cardsInitialTab by androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    // the default sub-tab (Accounts -> History, Cards -> Dashboard).
+    var accountsInitialTab by remember { mutableIntStateOf(0) }
+    var cardsInitialTab by remember { mutableIntStateOf(0) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -146,18 +149,17 @@ fun MainApp() {
                         onClick = {
                             val inSection = currentDestination?.hierarchy
                                 ?.any { it.route == screen.route } == true
-                            if (screen.route == Screen.Accounts.route) accountsInitialTab = 0
-                            if (screen.route == Screen.CreditCards.route) cardsInitialTab = 0
-                            if (inSection) {
-                                // Already inside this section (maybe deep in a detail
-                                // screen): pop back to its root, which always shows the
-                                // default sub-tab (Accounts → History, Cards → Dashboard).
-                                navController.popBackStack(screen.route, inclusive = false)
-                            } else {
+                            if (!inSection) {
+                                // Switching to a different section: reset to default sub-tab.
+                                if (screen.route == Screen.Accounts.route) accountsInitialTab = 0
+                                if (screen.route == Screen.CreditCards.route) cardsInitialTab = 0
                                 navController.navigate(screen.route) {
                                     popUpTo(navController.graph.findStartDestination().id)
                                     launchSingleTop = true
                                 }
+                            } else {
+                                // Already inside this section: pop back to its root.
+                                navController.popBackStack(screen.route, inclusive = false)
                             }
                         }
                     )
@@ -167,11 +169,24 @@ fun MainApp() {
     ) { innerPadding ->
         NavHost(
             navController = navController,
-            startDestination = Screen.Accounts.route,
+            startDestination = Screen.Home.route,
             modifier = Modifier.padding(innerPadding)
         ) {
+            composable(Screen.Home.route) {
+                HomeScreen(
+                    onAccountClick = { accountId ->
+                        navController.navigate("accounts/$accountId")
+                    },
+                    onCardClick = { cardId ->
+                        navController.navigate("cards/$cardId")
+                    }
+                )
+            }
+
             composable(Screen.CreditCards.route) {
                 CreditCardsScreen(
+                    initialTab = cardsInitialTab,
+                    onTabSelected = { cardsInitialTab = it },
                     onCardClick = { cardId ->
                         navController.navigate("cards/$cardId")
                     }
@@ -179,6 +194,9 @@ fun MainApp() {
             }
             composable(Screen.Expenses.route) {
                 ExpensesScreen()
+            }
+            composable(Screen.Stats.route) {
+                StatsScreen()
             }
             composable(
                 route = "cards/{cardId}",
@@ -188,6 +206,8 @@ fun MainApp() {
             }
             composable(Screen.Accounts.route) {
                 AccountsScreen(
+                    initialTab = accountsInitialTab,
+                    onTabSelected = { accountsInitialTab = it },
                     onAccountClick = { accountId ->
                         navController.navigate("accounts/$accountId")
                     }
@@ -209,7 +229,6 @@ fun MainApp() {
             }
             composable(Screen.Settings.route) {
                 SettingsScreen(
-                    onNavigateToDebug = { navController.navigate(Screen.Debug.route) },
                     onNavigateToCategories = { navController.navigate(Screen.Categories.route) },
                     onNavigateToSmsReview = { navController.navigate(Screen.SmsReview.route) }
                 )
@@ -217,7 +236,6 @@ fun MainApp() {
             composable(Screen.Categories.route) {
                 CategoriesScreen(onBack = { navController.popBackStack() })
             }
-            composable(Screen.Debug.route) { DebugScreen() }
             composable(Screen.SmsReview.route) {
                 SmsReviewScreen(onBack = { navController.popBackStack() })
             }

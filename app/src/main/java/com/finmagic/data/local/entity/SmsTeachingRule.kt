@@ -3,6 +3,7 @@ package com.finmagic.data.local.entity
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.finmagic.data.local.KeywordJson
 
 @Entity(
     tableName = "sms_teaching_rules",
@@ -16,7 +17,9 @@ data class SmsTeachingRule(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String = "",
     val senderKey: String?,
+    /** JSON array of required keywords (Plan §3). Use KeywordJson.encode/decode. */
     val requiredKeywords: String,
+    /** JSON array of excluded keywords (Plan §3). Use KeywordJson.encode/decode. */
     val excludedKeywords: String = "",
     
     // Field extraction patterns (Phase 3)
@@ -60,13 +63,21 @@ data class SmsTeachingRule(
             else -> action
         }
 
+    /** Parsed list of required keywords (decoded from JSON). */
+    val requiredKeywordsList: List<String>
+        get() = KeywordJson.decode(requiredKeywords)
+    
+    /** Parsed list of excluded keywords (decoded from JSON). */
+    val excludedKeywordsList: List<String>
+        get() = KeywordJson.decode(excludedKeywords)
+
     val summaryKeywords: String
         get() {
             val parts = mutableListOf<String>()
             senderKey?.let { parts.add("From: $it") }
-            val req = requiredKeywords.split('|').filter { it.isNotBlank() }
+            val req = requiredKeywordsList
             if (req.isNotEmpty()) parts.add("Keywords: ${req.joinToString(", ")}")
-            val exc = excludedKeywords.split('|').filter { it.isNotBlank() }
+            val exc = excludedKeywordsList
             if (exc.isNotEmpty()) parts.add("Exclude: ${exc.joinToString(", ")}")
             return parts.joinToString(" · ")
         }

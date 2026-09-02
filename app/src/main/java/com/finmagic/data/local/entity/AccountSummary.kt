@@ -10,7 +10,9 @@ data class AccountSummary(
     /** SUM(IN) - SUM(OUT); authoritative for Cash, fallback otherwise. */
     val computedBalance: Double,
     val monthIn: Double,
-    val monthOut: Double
+    val monthOut: Double,
+    /** Millis of the newest non-direct-set transaction; used for activity ordering. */
+    val lastActivity: Long = 0L
 ) {
     /** Balance shown in UI: bank-reported when available, else computed. */
     val displayBalance: Double

@@ -28,10 +28,10 @@ object BankSmsParser {
         RegexOption.IGNORE_CASE
     )
 
-    // Matches both "AMEX Bill …" and "VISA Bill …" statements (corpus had a VISA gap).
+    // Matches both "AMEX Bill …" and "VISA Bill …" statements.
     private val cityBankAmexPattern = Regex(
         """(AMEX|VISA)[\s\u00A0]*Bill[\s\u00A0]*(\w+'?\d{2,4}|\w+)[\s\u00A0]*(?:Total[\s\u00A0]*Due|Total[\s\u00A0]*Outstanding|Bill[\s\u00A0]*Outstanding|Outstanding)[\s\u00A0]*:?[\s\u00A0]*(?:\n|[\s\u00A0])*(BDT|Tk|TK|৳|\$|USD)?[\s\u00A0]*([\d,]+\.?\d*)[\s\u00A0]+""" +
-        """Min[\s\u00A0]*Due[\s\u00A0]*:?[\s\u00A0]*(?:\n|[\s\u00A0])*(?:BDT|Tk|TK|৳|\$|USD)?[\s\u00A0]*([\d,]+\.?\d*)[\s\u00A0]*CARD[\s\u00A0]*:?[\s\u00A0]*(?:\d{3}\*{3}|\*{2,4})(\d{3,4})[\s\u00A0]*""" +
+        """Min[\s\u00A0]*Due[\s\u00A0]*:?[\s\u00A0]*(?:\n|[\s\u00A0])*(?:BDT|Tk|TK|৳|\$|USD)?[\s\u00A0]*([\d,]+\.?\d*)[\s\u00A0]*CARD[\s\u00A0]*:?[\s\u00A0]*(?:[0-9*]{3,12}|\*{2,10})(\d{3,4})[\s\u00A0]*""" +
         """(?:Client[\s\u00A0]*ID[\s\u00A0]*:?[\s\u00A0]*(\d+)[\s\u00A0]*)?(?:Pay[\s\u00A0]*by[\s\u00A0]*(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{1,2}[-/.]\w{3}[-/.]\d{2,4}))?""",
         RegexOption.IGNORE_CASE
     )
@@ -67,6 +67,8 @@ object BankSmsParser {
         "BRAC-BANK" to BankType.BRAC_BANK,
         "CITYBANK" to BankType.CITY_BANK,
         "CITY BANK" to BankType.CITY_BANK,
+        "CITY AMEX" to BankType.CITY_BANK,
+        "CITY VISA" to BankType.CITY_BANK,
         "CITYTOUCH" to BankType.CITY_BANK,
         "EBL" to BankType.EBL,
         "EBLSKY" to BankType.EBL,
@@ -115,11 +117,11 @@ object BankSmsParser {
 
     fun identifyBank(sender: String?, body: String? = null): BankType {
         if (sender == null && body == null) return BankType.UNKNOWN
-        val normalized = sender?.trim()?.uppercase()?.replace(Regex("""[\s\u00A0-]+"""), "") ?: ""
+        val normalized = sender?.trim()?.uppercase()?.replace(Regex("""[^A-Z0-9]+"""), "") ?: ""
 
         // Check sender patterns with simplified normalized sender
         for ((key, type) in senderPatterns) {
-            val normalizedKey = key.uppercase().replace(Regex("""[\s\u00A0-]+"""), "")
+            val normalizedKey = key.uppercase().replace(Regex("""[^A-Z0-9]+"""), "")
             if (normalized == normalizedKey && type != BankType.UNKNOWN) return type
         }
 
@@ -152,14 +154,20 @@ object BankSmsParser {
     fun parse(smsBody: String, sender: String? = null): ParsedBill? {
         val bankType = identifyBank(sender, smsBody)
 
-        return when (bankType) {
+        val parsed = when (bankType) {
             BankType.PRIME_BANK -> parsePrimeBank(smsBody, "Prime Bank")
             BankType.PUBALI_BANK -> parsePubaliBank(smsBody)
             BankType.CITY_BANK -> parseCityBank(smsBody)
             BankType.BRAC_BANK -> parseBracBank(smsBody)
             BankType.EBL -> parseEbl(smsBody)
             BankType.UNKNOWN -> null
+        } ?: return null
+
+        if (parsed.totalDue <= 0.0 && parsed.minDue <= 0.0) {
+            return null
         }
+
+        return parsed
     }
 
     private fun parsePubaliBank(smsBody: String): ParsedBill? {

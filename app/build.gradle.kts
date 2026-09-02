@@ -82,6 +82,9 @@ dependencies {
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
+    // Gson
+    implementation("com.google.code.gson:gson:2.11.0")
+
     // Biometric
     implementation("androidx.biometric:biometric:1.2.0-alpha05")
 

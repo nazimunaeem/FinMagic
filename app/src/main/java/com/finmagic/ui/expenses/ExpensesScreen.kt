@@ -11,11 +11,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -26,14 +31,18 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +53,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.finmagic.data.repository.ExpenseItem
+import com.finmagic.data.repository.CategoryTotal
+import com.finmagic.data.sms.parsers.TxnCategory
+import com.finmagic.ui.accounts.categoryLabel
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -51,6 +63,7 @@ import java.util.Locale
 
 private val bdtFormat = { amount: Double -> "Tk ${String.format(Locale.US, "%,.2f", amount)}" }
 private val dayFormat = SimpleDateFormat("dd MMM", Locale.US)
+private val dateTimeFormat = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US)
 private val monthName = { m: Int ->
     val cal = Calendar.getInstance().apply { set(Calendar.MONTH, m - 1) }
     SimpleDateFormat("MMMM", Locale.US).format(cal.time)
@@ -64,6 +77,28 @@ private val monthShort = { m: Int ->
 @Composable
 fun ExpensesScreen(viewModel: ExpensesViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val availableYears by viewModel.availableYears.collectAsStateWithLifecycle()
+    val categoryNicknames by viewModel.categoryNicknames.collectAsStateWithLifecycle()
+
+    var categoryFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var activeItem by remember { mutableStateOf<ExpenseItem?>(null) }
+
+    val categoryNames = remember(state.stats) {
+        state.stats?.categories?.map { it.category } ?: emptyList()
+    }
+    val filteredItems = remember(state.items, categoryFilter, searchQuery) {
+        val q = searchQuery.trim()
+        state.items.filter { item ->
+            (categoryFilter == null || item.category == categoryFilter) &&
+                (q.isEmpty() || listOf(item.title, item.subtitle, item.category).any {
+                    it != null && it.contains(q, ignoreCase = true)
+                })
+        }
+    }
+
+    // Refresh data when the screen re-enters composition (e.g. navigating back).
+    LaunchedEffect(Unit) { viewModel.refresh() }
 
     Scaffold(
         topBar = {
@@ -80,27 +115,58 @@ fun ExpensesScreen(viewModel: ExpensesViewModel = hiltViewModel()) {
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item { MonthYearSelector(state, viewModel) }
+            item { MonthYearSelector(state, viewModel, availableYears) }
 
-            state.stats?.let { stats ->
-                item { StatsCard(stats) }
-                if (stats.categories.isNotEmpty()) {
-                    item { CategoryBreakdown(stats.categories, stats.total) }
+            if (state.loading) {
+                item {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(2.dp))
+                    )
                 }
             }
 
-            if (state.items.isEmpty()) {
+            state.stats?.let { stats ->
+                if (stats.categories.isNotEmpty()) {
+                    item {
+                        ExpenseFilters(
+                            categories = categoryNames,
+                            selectedCategory = categoryFilter,
+                            onCategorySelected = { categoryFilter = it },
+                            query = searchQuery,
+                            onQueryChange = { searchQuery = it },
+                            categoryNicknames = categoryNicknames
+                        )
+                    }
+                    item {
+                        CategoryBreakdown(
+                            categories = stats.categories,
+                            prevCategories = stats.prevCategories,
+                            total = stats.total,
+                            selectedCategory = categoryFilter,
+                            onCategoryClick = { categoryFilter = it },
+                            categoryNicknames = categoryNicknames
+                        )
+                    }
+                }
+            }
+
+            if (filteredItems.isEmpty()) {
                 item {
                     Spacer(Modifier.height(24.dp))
                     Text(
-                        "No expenses recorded for this period.",
+                        text = if (state.items.isEmpty())
+                            "No expenses recorded for this period."
+                        else
+                            "No matching expenses.",
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             } else {
-                val grouped = state.items.groupBy {
+                val grouped = filteredItems.groupBy {
                     dayFormat.format(Date(it.occurredAt))
                 }
                 grouped.forEach { (day, list) ->
@@ -112,20 +178,47 @@ fun ExpensesScreen(viewModel: ExpensesViewModel = hiltViewModel()) {
                         )
                     }
                     items(list, key = { it.uid }) { item ->
-                        ExpenseRowItem(item)
+                        ExpenseRowItem(
+                            item = item,
+                            categoryNicknames = categoryNicknames,
+                            onTap = if (item.accountTxnId != null)
+                                { { activeItem = item } }
+                            else null
+                        )
                     }
                 }
             }
         }
     }
+
+    activeItem?.let { item ->
+        val id = item.accountTxnId
+        if (id != null) {
+            ExpenseOptionsDialog(
+                item = item,
+                onDismiss = { activeItem = null },
+                onSetExpense = { include ->
+                    viewModel.setExpenseOverride(
+                        id,
+                        TxnCategory.targetOverride(include, item.direction, item.rawCategory)
+                    )
+                    activeItem = null
+                }
+            )
+        }
+    }
 }
 
 @Composable
-private fun MonthYearSelector(state: ExpensesUiState, viewModel: ExpensesViewModel) {
+private fun MonthYearSelector(
+    state: ExpensesUiState,
+    viewModel: ExpensesViewModel,
+    availableYears: List<Int>
+) {
     var showPicker by remember { mutableStateOf(false) }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().height(56.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Row(
@@ -150,12 +243,12 @@ private fun MonthYearSelector(state: ExpensesUiState, viewModel: ExpensesViewMod
         }
     }
 
-    if (showPicker) {
+    if (showPicker && availableYears.isNotEmpty()) {
         MonthYearPickerDialog(
             selectedYear = state.year,
             selectedMonth = state.month,
-            minYear = viewModel.availableYears.last(),
-            maxYear = viewModel.availableYears.first(),
+            minYear = availableYears.last(),
+            maxYear = availableYears.first(),
             onPick = { year, month ->
                 viewModel.setMonth(year, month)
                 showPicker = false
@@ -207,7 +300,10 @@ private fun MonthYearPickerDialog(
             }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 (1..12).chunked(3).forEach { rowMonths ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -229,7 +325,10 @@ private fun MonthYearPickerDialog(
 }
 
 @Composable
-private fun StatsCard(stats: com.finmagic.data.repository.ExpenseStats) {
+private fun StatsCard(
+    stats: com.finmagic.data.repository.ExpenseStats,
+    categoryNicknames: Map<String, String> = emptyMap()
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Total spent", style = MaterialTheme.typography.labelMedium)
@@ -252,6 +351,22 @@ private fun StatsCard(stats: com.finmagic.data.repository.ExpenseStats) {
                     style = MaterialTheme.typography.bodySmall
                 )
             }
+            if (stats.daysInMonth > 0) {
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { (stats.daysElapsed.toFloat() / stats.daysInMonth).coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "${stats.daysElapsed} of ${stats.daysInMonth} days elapsed",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Spacer(Modifier.height(8.dp))
             val delta = if (stats.prevTotal > 0) {
                 (stats.total - stats.prevTotal) / stats.prevTotal * 100.0
@@ -268,24 +383,105 @@ private fun StatsCard(stats: com.finmagic.data.repository.ExpenseStats) {
                 "vs last month: n/a",
                 style = MaterialTheme.typography.bodySmall
             )
+            stats.topCategory?.let { top ->
+                val pct = if (stats.total > 0) top.total / stats.total * 100.0 else 0.0
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Top: ${categoryLabel(top.category, categoryNicknames)} · ${String.format(Locale.US, "%.0f", pct)}%",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun CategoryBreakdown(categories: List<com.finmagic.data.repository.CategoryTotal>, total: Double) {
+private fun ExpenseFilters(
+    categories: List<String>,
+    selectedCategory: String?,
+    onCategorySelected: (String?) -> Unit,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    categoryNicknames: Map<String, String> = emptyMap()
+) {
+    var showCategories by rememberSaveable { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Filters", style = MaterialTheme.typography.titleSmall)
+            IconButton(onClick = { showCategories = !showCategories }) {
+                Icon(
+                    imageVector = Icons.Default.Menu,
+                    contentDescription = "Toggle category filter"
+                )
+            }
+        }
+        if (showCategories && categories.isNotEmpty()) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    FilterChip(
+                        selected = selectedCategory == null,
+                        onClick = { onCategorySelected(null) },
+                        label = { Text("All categories") }
+                    )
+                }
+                items(categories) { cat ->
+                    FilterChip(
+                        selected = selectedCategory == cat,
+                        onClick = { onCategorySelected(if (selectedCategory == cat) null else cat) },
+                        label = { Text(categoryLabel(cat, categoryNicknames)) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryBreakdown(
+    categories: List<com.finmagic.data.repository.CategoryTotal>,
+    prevCategories: List<CategoryTotal>,
+    total: Double,
+    selectedCategory: String?,
+    onCategoryClick: (String?) -> Unit,
+    categoryNicknames: Map<String, String> = emptyMap()
+) {
+    val prevByCat = prevCategories.associate { it.category to it.total }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("By category", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
             categories.forEach { cat ->
                 val fraction = if (total > 0) (cat.total / total).toFloat() else 0f
-                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                val selected = selectedCategory == cat.category
+                val prev = prevByCat[cat.category]
+                val delta = prev?.takeIf { it > 0 }
+                    ?.let { (cat.total - it) / it * 100.0 }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onCategoryClick(if (selected) null else cat.category) }
+                        .padding(vertical = 4.dp)
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(cat.category.ifBlank { "Expense" }, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            categoryLabel(cat.category, categoryNicknames),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                        )
                         Text(bdtFormat(cat.total), style = MaterialTheme.typography.bodyMedium)
                     }
                     Spacer(Modifier.height(2.dp))
@@ -296,6 +492,32 @@ private fun CategoryBreakdown(categories: List<com.finmagic.data.repository.Cate
                             .height(6.dp)
                             .clip(RoundedCornerShape(3.dp))
                     )
+                    Spacer(Modifier.height(2.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        val deltaColor = when {
+                            delta == null -> MaterialTheme.colorScheme.onSurfaceVariant
+                            delta >= 0 -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.primary
+                        }
+                        val deltaText = when {
+                            delta == null -> if (prevByCat.containsKey(cat.category)) "same as last month" else "new this month"
+                            delta >= 0 -> "▲ ${String.format(Locale.US, "%.1f", delta)}% vs last mo"
+                            else -> "▼ ${String.format(Locale.US, "%.1f", kotlin.math.abs(delta))}% vs last mo"
+                        }
+                        Text(
+                            deltaText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = deltaColor
+                        )
+                        Text(
+                            "${cat.count} txn${if (cat.count == 1) "" else "s"}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
@@ -303,10 +525,15 @@ private fun CategoryBreakdown(categories: List<com.finmagic.data.repository.Cate
 }
 
 @Composable
-private fun ExpenseRowItem(item: ExpenseItem) {
+private fun ExpenseRowItem(
+    item: ExpenseItem,
+    onTap: (() -> Unit)? = null,
+    categoryNicknames: Map<String, String> = emptyMap()
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (onTap != null) Modifier.clickable(onClick = onTap) else Modifier)
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -316,7 +543,7 @@ private fun ExpenseRowItem(item: ExpenseItem) {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text(
-                if (item.source == "card") "Card" else item.category.ifBlank { "Expense" },
+                if (item.source == "card") "Card" else categoryLabel(item.category, categoryNicknames),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline
             )
@@ -329,4 +556,63 @@ private fun ExpenseRowItem(item: ExpenseItem) {
         )
     }
     HorizontalDivider()
+}
+
+@Composable
+private fun ExpenseOptionsDialog(
+    item: ExpenseItem,
+    onDismiss: () -> Unit,
+    onSetExpense: (Boolean) -> Unit
+) {
+    var include by remember {
+        mutableStateOf(TxnCategory.countsAsExpense(item.isExpenseOverride, item.direction, item.rawCategory))
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Expense Options") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    item.title.ifBlank { "Expense" },
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    bdtFormat(item.amount),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error
+                )
+                Text(
+                    dateTimeFormat.format(Date(item.occurredAt)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { include = !include },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Count as expense",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(checked = include, onCheckedChange = { include = it })
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSetExpense(include) }) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }

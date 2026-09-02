@@ -22,11 +22,14 @@ interface AccountDao {
     @Query("SELECT * FROM accounts WHERE kind = 'CASH' LIMIT 1")
     suspend fun getCashAccountOnce(): Account?
 
-    @Query("SELECT * FROM accounts WHERE isArchived = 0 ORDER BY kind, name")
+    @Query("SELECT * FROM accounts WHERE isArchived = 0 ORDER BY CASE kind WHEN 'CASH' THEN 0 WHEN 'BANK' THEN 1 WHEN 'WALLET' THEN 2 ELSE 3 END, name")
     fun observeAll(): Flow<List<Account>>
 
-    @Query("SELECT * FROM accounts WHERE isArchived = 0 ORDER BY kind, name")
+    @Query("SELECT * FROM accounts WHERE isArchived = 0 ORDER BY CASE kind WHEN 'CASH' THEN 0 WHEN 'BANK' THEN 1 WHEN 'WALLET' THEN 2 ELSE 3 END, name")
     suspend fun getAllOnce(): List<Account>
+
+    @Query("SELECT * FROM accounts WHERE isArchived = 1 ORDER BY name")
+    fun observeArchived(): Flow<List<Account>>
 
     @Query("UPDATE accounts SET isArchived = :archived WHERE id = :id")
     suspend fun setArchived(id: Long, archived: Boolean)

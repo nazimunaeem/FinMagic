@@ -13,6 +13,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.finmagic.data.local.entity.SmsTeachingRule
 import com.finmagic.data.sms.SmsTeachingEngine
+import com.finmagic.data.sms.ExtractedFields
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -21,10 +22,12 @@ import java.util.Locale
 @Composable
 fun RuleTestScreen(
     rules: List<SmsTeachingRule>,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    initialBody: String = "",
+    initialSender: String = ""
 ) {
-    var testSmsBody by remember { mutableStateOf("") }
-    var testSmsSender by remember { mutableStateOf("") }
+    var testSmsBody by remember { mutableStateOf(initialBody) }
+    var testSmsSender by remember { mutableStateOf(initialSender) }
     var testResult by remember { mutableStateOf<TestResult?>(null) }
     var showValidationError by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf("") }
@@ -99,9 +102,9 @@ fun RuleTestScreen(
                         match = match,
                         extractedFields = extracted,
                         matchedRules = rules.filter { rule ->
-                            val required = rule.requiredKeywords.split('|').map { it.trim() }.filter { it.isNotEmpty() }
-                            val excluded = rule.excludedKeywords.split('|').map { it.trim() }.filter { it.isNotEmpty() }
-                            
+                            val required = rule.requiredKeywordsList
+                            val excluded = rule.excludedKeywordsList
+
                             // Check rule matches
                             (rule.senderKey.isNullOrBlank() || sender?.contains(rule.senderKey.uppercase()) == true) &&
                             required.all { normalizedBody.contains(it, ignoreCase = true) } &&
@@ -138,15 +141,19 @@ fun RuleTestScreen(
                         Text(
                             validationError,
                             color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyMedium
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
                         )
+                        IconButton(onClick = { showValidationError = false }, modifier = Modifier.size(20.dp)) {
+                            Icon(Icons.Default.Close, contentDescription = "Dismiss", modifier = Modifier.size(14.dp))
+                        }
                     }
                 }
             }
 
             // Show test results
             testResult?.let { result ->
-                Divider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 
                 Text(
                     "Test Results",
@@ -285,7 +292,9 @@ fun RuleTestScreen(
                                 if (rule.senderKey != null) {
                                     Text("Sender: ${rule.senderKey}", style = MaterialTheme.typography.bodySmall)
                                 }
-                                Text("Keywords: ${rule.requiredKeywords}", style = MaterialTheme.typography.bodySmall)
+                                if (rule.requiredKeywordsList.isNotEmpty()) {
+                                    Text("Keywords: ${rule.requiredKeywordsList.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
+                                }
                             }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
@@ -295,16 +304,10 @@ fun RuleTestScreen(
         }
     }
 
-    if (showValidationError) {
-        LaunchedEffect(validationError) {
-            kotlinx.coroutines.delay(3000)
-            showValidationError = false
-        }
-    }
 }
 
 private data class TestResult(
     val match: SmsTeachingRule?,
-    val extractedFields: SmsTeachingEngine.ExtractedFields,
+    val extractedFields: ExtractedFields,
     val matchedRules: List<SmsTeachingRule>
 )
