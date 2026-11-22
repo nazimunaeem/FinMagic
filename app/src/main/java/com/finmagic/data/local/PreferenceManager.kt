@@ -23,6 +23,12 @@ data class RecurringTemplate(
         get() = "${kind.lowercase()}|${title.trim()}"
 }
 
+enum class AppThemeMode(val label: String) {
+    LIGHT("Light"),
+    DARK("Dark"),
+    SYSTEM("System")
+}
+
 @Singleton
 class PreferenceManager @Inject constructor(@ApplicationContext private val context: Context) {
 
@@ -37,6 +43,7 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
     private val CASH_EXPENSE_CATEGORIES = stringPreferencesKey("cash_expense_categories")
     private val CASH_INCOME_CATEGORIES = stringPreferencesKey("cash_income_categories")
     private val RECURRING_TEMPLATES = stringSetPreferencesKey("recurring_templates")
+    private val THEME_MODE = stringPreferencesKey("theme_mode")
 
     val notificationsEnabled: Flow<Boolean> = context.dataStore.data.map { it[NOTIFICATIONS_ENABLED] ?: true }
     val alertRules: Flow<Set<String>> = context.dataStore.data.map {
@@ -49,6 +56,15 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
     val largeDebitAlerts: Flow<Boolean> = context.dataStore.data.map { it[LARGE_DEBIT_ALERTS] ?: true }
     val largeDebitThreshold: Flow<Double> = context.dataStore.data.map { it[LARGE_DEBIT_THRESHOLD] ?: 10_000.0 }
     val biometricLockEnabled: Flow<Boolean> = context.dataStore.data.map { it[BIOMETRIC_LOCK] ?: false }
+
+    val themeMode: Flow<AppThemeMode> = context.dataStore.data.map { prefs ->
+        val stored = prefs[THEME_MODE]
+        AppThemeMode.entries.firstOrNull { it.name == stored } ?: AppThemeMode.LIGHT
+    }
+
+    suspend fun setThemeMode(mode: AppThemeMode) {
+        context.dataStore.edit { it[THEME_MODE] = mode.name }
+    }
 
     /**
      * User-defined display nicknames for auto-detected transaction categories.

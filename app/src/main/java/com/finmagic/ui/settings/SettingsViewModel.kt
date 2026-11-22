@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.finmagic.data.repository.BillRepository
+import com.finmagic.data.local.AppThemeMode
 import com.finmagic.data.local.PreferenceManager
 import com.finmagic.notification.DueDateReminderScheduler
 import com.finmagic.notification.SmsScheduler
@@ -57,6 +58,9 @@ class SettingsViewModel @Inject constructor(
     val biometricLockEnabled: StateFlow<Boolean> = preferenceManager.biometricLockEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
+    val themeMode: StateFlow<AppThemeMode> = preferenceManager.themeMode
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppThemeMode.LIGHT)
+
     val categoryNicknames: StateFlow<Map<String, String>> = preferenceManager.categoryNicknames
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
@@ -76,6 +80,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setBiometricLockEnabled(enabled: Boolean) {
         viewModelScope.launch { preferenceManager.setBiometricLockEnabled(enabled) }
+    }
+
+    fun setThemeMode(mode: AppThemeMode) {
+        viewModelScope.launch { preferenceManager.setThemeMode(mode) }
     }
 
     fun setCategoryNickname(category: String, nickname: String) {
