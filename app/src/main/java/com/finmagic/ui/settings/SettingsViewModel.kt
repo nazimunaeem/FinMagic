@@ -3,25 +3,28 @@ package com.finmagic.ui.settings
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.finmagic.data.repository.BillRepository
 import com.finmagic.data.local.AppThemeMode
 import com.finmagic.data.local.PreferenceManager
+import com.finmagic.data.local.dao.CardTransactionDao
+import com.finmagic.data.repository.AccountRepository
+import com.finmagic.data.repository.BillRepository
 import com.finmagic.notification.DueDateReminderScheduler
 import com.finmagic.notification.SmsScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
-
-import kotlinx.coroutines.flow.first
 
 sealed class ExportState {
     data object Idle : ExportState()
@@ -34,6 +37,8 @@ sealed class ExportState {
 class SettingsViewModel @Inject constructor(
     application: Application,
     private val billRepository: BillRepository,
+    private val accountRepository: AccountRepository,
+    private val cardTransactionDao: CardTransactionDao,
     private val preferenceManager: PreferenceManager
 ) : AndroidViewModel(application) {
 
@@ -193,23 +198,128 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    private fun escapeCsv(value: String?): String {
+        val v = value ?: ""
+        return if (v.contains(',') || v.contains('"') || v.contains('\n') || v.contains('\r')) {
+            "\"${v.replace("\"", "\"\"")}\""
+        } else {
+            v
+        }
+    }
+
+    private fun csvRow(vararg cols: String?): String = cols.joinToString(",") { escapeCsv(it) }
+
     fun exportData() {
         viewModelScope.launch {
             _exportState.value = ExportState.Loading
             try {
                 val context = getApplication<Application>()
-                val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-                val file = File(context.filesDir, "cardbill_export_$timestamp.csv")
+                val file = withContext(Dispatchers.IO) {
+                    val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                    val dateTimeFmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
+                    val outFile = File(context.filesDir, "finmagic_export_$timestamp.csv")
 
-                val bills = billRepository.getAllBills().first()
-                file.bufferedWriter().use { writer ->
-                    writer.appendLine("Bank,Card Last4,Period,Currency,Total Due,Min Due,Due Date,Paid")
-                    for (bill in bills) {
+                    val accounts = accountRepository.getAllAccountsOnce()
+                    val accountTxns = accountRepository.observeAllTransactionsWithAccount().first()
+                    val cardTxns = cardTransactionDao.observeAll().first()
+                    val bills = billRepository.getAllBills().first()
+
+                    outFile.bufferedWriter().use { writer ->
                         writer.appendLine(
-                            "${bill.displayName},${bill.billPeriod},${bill.currency},${bill.totalDue}," +
-                            "${bill.minDue},${bill.dueDate},${bill.isPaid}"
+                            csvRow(
+                                "Record Type",
+                                "Date",
+                                "Account / Card",
+                                "Category / Period",
+                                "Direction / Status",
+                                "Amount",
+                                "Currency",
+                                "Balance / Min Due",
+                                "Counterparty / Merchant",
+                                "Source / Due Date"
+                            )
                         )
+
+                        for (acct in accounts) {
+                            val txns = accountRepository.getAllTransactionsOnce(acct.id)
+                            val balance = AccountRepository.effectiveBalance(txns)
+                            writer.appendLine(
+                                csvRow(
+                                    "ACCOUNT",
+                                    "",
+                                    "${acct.displayName} (${acct.accountMask})",
+                                    acct.kind,
+                                    if (acct.includeInTotal) "INCLUDED" else "EXCLUDED",
+                                    String.format(Locale.US, "%.2f", balance),
+                                    acct.currency,
+                                    "",
+                                    acct.bankName,
+                                    "Active account"
+                                )
+                            )
+                        }
+
+                        for (txn in accountTxns) {
+                            writer.appendLine(
+                                csvRow(
+                                    "ACCOUNT_TXN",
+                                    dateTimeFmt.format(Date(txn.occurredAt)),
+                                    txn.accountName,
+                                    txn.category ?: "Uncategorized",
+                                    txn.direction,
+                                    String.format(Locale.US, "%.2f", txn.amount),
+                                    txn.currency,
+                                    txn.balanceAfter?.let { String.format(Locale.US, "%.2f", it) } ?: "",
+                                    txn.counterparty ?: "",
+                                    if (txn.isManual) "MANUAL" else "SMS"
+                                )
+                            )
+                        }
+
+                        for (cardTx in cardTxns) {
+                            val cardLabel = listOfNotNull(
+                                cardTx.bankName.takeIf { it.isNotBlank() },
+                                "•••• ${cardTx.cardTail}"
+                            ).joinToString(" ")
+                            writer.appendLine(
+                                csvRow(
+                                    "CARD_TXN",
+                                    dateTimeFmt.format(Date(cardTx.occurredAt)),
+                                    cardLabel,
+                                    cardTx.category ?: "Card Spend",
+                                    "OUT",
+                                    String.format(Locale.US, "%.2f", cardTx.amount),
+                                    "BDT",
+                                    "",
+                                    cardTx.merchant,
+                                    if (cardTx.smsBody.startsWith("manual:")) "MANUAL" else "SMS"
+                                )
+                            )
+                        }
+
+                        for (bill in bills) {
+                            val status = when {
+                                bill.isPaid -> "PAID"
+                                bill.paidAmount > 0 -> "PARTIAL (paid ${String.format(Locale.US, "%.2f", bill.paidAmount)})"
+                                else -> "UNPAID"
+                            }
+                            writer.appendLine(
+                                csvRow(
+                                    "CARD_BILL",
+                                    dateTimeFmt.format(Date(bill.detectedAt)),
+                                    "${bill.displayName} (•••• ${bill.cardLast4})",
+                                    bill.billPeriod,
+                                    status,
+                                    String.format(Locale.US, "%.2f", bill.totalDue),
+                                    bill.currency,
+                                    String.format(Locale.US, "%.2f", bill.minDue),
+                                    "",
+                                    "Due: ${bill.dueDate}"
+                                )
+                            )
+                        }
                     }
+                    outFile
                 }
                 _exportState.value = ExportState.Success(file)
             } catch (e: Exception) {

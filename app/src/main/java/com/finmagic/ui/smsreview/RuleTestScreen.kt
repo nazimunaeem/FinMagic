@@ -26,11 +26,32 @@ fun RuleTestScreen(
     initialBody: String = "",
     initialSender: String = ""
 ) {
-    var testSmsBody by remember { mutableStateOf(initialBody) }
-    var testSmsSender by remember { mutableStateOf(initialSender) }
-    var testResult by remember { mutableStateOf<TestResult?>(null) }
+    var testSmsBody by remember(initialBody) { mutableStateOf(initialBody) }
+    var testSmsSender by remember(initialSender) { mutableStateOf(initialSender) }
+    var testResult by remember(initialBody, initialSender) { mutableStateOf<TestResult?>(null) }
     var showValidationError by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf("") }
+
+    fun evaluateRules(body: String, senderInput: String): TestResult {
+        val normalizedBody = SmsTeachingEngine.normalizeText(body)
+        val sender = senderInput.trim().uppercase().takeIf { it.isNotBlank() }
+        val match = SmsTeachingEngine.findBestMatch(
+            rules.filter { it.enabled },
+            sender,
+            normalizedBody
+        )
+        val extracted = SmsTeachingEngine.extractAllFields(body)
+        val matching = rules.filter { rule ->
+            SmsTeachingEngine.matchesRule(rule, sender, normalizedBody)
+        }
+        return TestResult(match = match, extractedFields = extracted, matchedRules = matching)
+    }
+
+    LaunchedEffect(initialBody, initialSender, rules) {
+        if (initialBody.isNotBlank()) {
+            testResult = evaluateRules(initialBody, initialSender)
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -84,33 +105,8 @@ fun RuleTestScreen(
                         showValidationError = true
                         return@Button
                     }
-
-                    val normalizedBody = SmsTeachingEngine.normalizeText(testSmsBody)
-                    val sender = testSmsSender.trim().takeIf { it.isNotBlank() }
-                    
-                    // Find matching rules
-                    val match = SmsTeachingEngine.findBestMatch(
-                        rules.filter { it.enabled },
-                        sender,
-                        normalizedBody
-                    )
-                    
-                    // Extract fields from SMS
-                    val extracted = SmsTeachingEngine.extractAllFields(testSmsBody)
-                    
-                    testResult = TestResult(
-                        match = match,
-                        extractedFields = extracted,
-                        matchedRules = rules.filter { rule ->
-                            val required = rule.requiredKeywordsList
-                            val excluded = rule.excludedKeywordsList
-
-                            // Check rule matches
-                            (rule.senderKey.isNullOrBlank() || sender?.contains(rule.senderKey.uppercase()) == true) &&
-                            required.all { normalizedBody.contains(it, ignoreCase = true) } &&
-                            excluded.none { normalizedBody.contains(it, ignoreCase = true) }
-                        }
-                    )
+                    showValidationError = false
+                    testResult = evaluateRules(testSmsBody, testSmsSender)
                 },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = testSmsBody.isNotBlank()

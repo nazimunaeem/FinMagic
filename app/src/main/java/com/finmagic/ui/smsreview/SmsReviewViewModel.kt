@@ -422,16 +422,12 @@ class SmsReviewViewModel @Inject constructor(
                 _message.value = "No unparsed messages available to process"
                 return@launch
             }
-            val count = smsTeachingEngine.applyRuleToHistorical(rule, unparsedList)
-            if (count > 0) {
-                unparsedList.forEach { record ->
-                    val sender = record.address?.trim()?.uppercase()
-                    val normalized = SmsTeachingEngine.normalizeText(record.body)
-                    if (SmsTeachingEngine.findBestMatch(listOf(rule), sender, normalized) != null) {
-                        smsRecordDao.updateParsedStatus(record.id, true)
-                    }
+            val appliedIds = smsTeachingEngine.applyRuleToHistorical(rule, unparsedList)
+            if (appliedIds.isNotEmpty()) {
+                appliedIds.forEach { smsId ->
+                    smsRecordDao.updateParsedStatus(smsId, true)
                 }
-                _message.value = "Rule applied to $count historical SMS messages"
+                _message.value = "Rule applied to ${appliedIds.size} historical SMS messages"
             } else {
                 _message.value = "No historical unparsed messages matched this rule"
             }

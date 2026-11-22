@@ -1,18 +1,23 @@
 package com.finmagic.ui.smsreview
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -22,11 +27,12 @@ import com.finmagic.data.local.entity.AccountTransaction
 import com.finmagic.data.local.entity.SmsRecord
 import com.finmagic.data.local.entity.SmsTeachingRule
 import com.finmagic.ui.theme.StatusSafe
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun SmsReviewScreen(
     viewModel: SmsReviewViewModel = hiltViewModel(),
@@ -41,8 +47,12 @@ fun SmsReviewScreen(
     val selectedRecord by viewModel.selectedRecord.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     var showRuleTest by remember { mutableStateOf(false) }
+    var testInitialBody by remember { mutableStateOf("") }
+    var testInitialSender by remember { mutableStateOf("") }
 
+    val clipboard = LocalClipboardManager.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(message) {
         message?.let {
@@ -56,12 +66,19 @@ fun SmsReviewScreen(
             TopAppBar(
                 title = { Text("SMS Recognition") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, "Back")
+                    IconButton(onClick = onBack, modifier = Modifier.testTag("sms_review_back")) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showRuleTest = true }) {
+                    IconButton(
+                        onClick = {
+                            testInitialBody = ""
+                            testInitialSender = ""
+                            showRuleTest = true
+                        },
+                        modifier = Modifier.testTag("sms_review_test_rules")
+                    ) {
                         Icon(Icons.Default.Search, contentDescription = "Test Rules")
                     }
                 }
@@ -105,7 +122,16 @@ fun SmsReviewScreen(
                             items(allSms, key = { it.id }) { record ->
                                 AllSmsItem(
                                     record = record,
-                                    onTap = { viewModel.selectRecord(record) }
+                                    onTap = { viewModel.selectRecord(record) },
+                                    onTestRules = {
+                                        testInitialBody = record.body
+                                        testInitialSender = record.address.orEmpty()
+                                        showRuleTest = true
+                                    },
+                                    onCopyBody = {
+                                        clipboard.setText(AnnotatedString(record.body))
+                                        scope.launch { snackbarHostState.showSnackbar("SMS body copied") }
+                                    }
                                 )
                             }
                         }
@@ -128,7 +154,15 @@ fun SmsReviewScreen(
                                 UnparsedSmsItem(
                                     record = record,
                                     onTap = { viewModel.selectRecord(record) },
-                                    onIgnore = { viewModel.ignoreSms(record) }
+                                    onTestRules = {
+                                        testInitialBody = record.body
+                                        testInitialSender = record.address.orEmpty()
+                                        showRuleTest = true
+                                    },
+                                    onCopyBody = {
+                                        clipboard.setText(AnnotatedString(record.body))
+                                        scope.launch { snackbarHostState.showSnackbar("SMS body copied") }
+                                    }
                                 )
                             }
                         }
@@ -151,6 +185,8 @@ fun SmsReviewScreen(
     if (showRuleTest) {
         RuleTestScreen(
             rules = rules,
+            initialBody = testInitialBody,
+            initialSender = testInitialSender,
             onDismiss = { showRuleTest = false }
         )
     }
@@ -191,103 +227,168 @@ fun SmsReviewScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun UnparsedSmsItem(
     record: SmsRecord,
     onTap: () -> Unit,
-    onIgnore: () -> Unit
+    onTestRules: () -> Unit,
+    onCopyBody: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onTap)
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    var showMenu by remember { mutableStateOf(false) }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = onTap,
+                    onLongClick = { showMenu = true }
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .testTag("sms_unparsed_item_${record.id}")
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = record.address ?: "Unknown",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault()).format(Date(record.timestamp)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.height(4.dp))
             Text(
-                text = record.address ?: "Unknown",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f)
+                text = record.body,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium
             )
+            Spacer(Modifier.height(4.dp))
             Text(
-                text = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault()).format(Date(record.timestamp)),
+                text = "Tap to teach • Hold for options",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
         }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = record.body,
-            maxLines = 3,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.bodyMedium
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = "No built-in parser matched",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
+
+        DropdownMenu(
+            expanded = showMenu,
+            onDismissRequest = { showMenu = false }
+        ) {
+            DropdownMenuItem(
+                text = { Text("Test Rules") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                onClick = {
+                    showMenu = false
+                    onTestRules()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Copy Body") },
+                leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
+                onClick = {
+                    showMenu = false
+                    onCopyBody()
+                }
+            )
+        }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AllSmsItem(
     record: SmsRecord,
-    onTap: () -> Unit
+    onTap: () -> Unit,
+    onTestRules: () -> Unit,
+    onCopyBody: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onTap)
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(
-                        if (record.isParsed) StatusSafe else MaterialTheme.colorScheme.error
-                    )
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = record.address ?: "Unknown",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f)
-            )
-            Surface(
-                shape = RoundedCornerShape(4.dp),
-                color = if (record.isParsed) StatusSafe.copy(alpha = 0.12f) else MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
-            ) {
+    var showMenu by remember { mutableStateOf(false) }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = onTap,
+                    onLongClick = { showMenu = true }
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .testTag("sms_all_item_${record.id}")
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(
+                            if (record.isParsed) StatusSafe else MaterialTheme.colorScheme.error
+                        )
+                )
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    text = if (record.isParsed) "Parsed" else "Unparsed",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (record.isParsed) StatusSafe else MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                    fontWeight = FontWeight.Medium
+                    text = record.address ?: "Unknown",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = if (record.isParsed) StatusSafe.copy(alpha = 0.12f) else MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
+                ) {
+                    Text(
+                        text = if (record.isParsed) "Parsed" else "Unparsed",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (record.isParsed) StatusSafe else MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault()).format(Date(record.timestamp)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.height(4.dp))
             Text(
-                text = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault()).format(Date(record.timestamp)),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                text = record.body,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(start = 16.dp)
+            )
+            HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
+        }
+
+        DropdownMenu(
+            expanded = showMenu,
+            onDismissRequest = { showMenu = false }
+        ) {
+            DropdownMenuItem(
+                text = { Text("Test Rules") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                onClick = {
+                    showMenu = false
+                    onTestRules()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Copy Body") },
+                leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
+                onClick = {
+                    showMenu = false
+                    onCopyBody()
+                }
             )
         }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = record.body,
-            maxLines = 3,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(start = 16.dp)
-        )
-        HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
     }
 }
 

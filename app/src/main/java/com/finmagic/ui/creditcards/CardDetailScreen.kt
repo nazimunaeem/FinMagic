@@ -1,6 +1,8 @@
 package com.finmagic.ui.creditcards
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -8,8 +10,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -22,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -34,8 +40,10 @@ import com.finmagic.ui.components.BillCard
 import com.finmagic.ui.components.SectionHeader
 import com.finmagic.ui.theme.StatusSafe
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,9 +63,11 @@ fun CardDetailScreen(
     val selectedYear by viewModel.selectedYear.collectAsStateWithLifecycle()
     val selectedMonth by viewModel.selectedMonth.collectAsStateWithLifecycle()
     val canStepNext by viewModel.canStepNext.collectAsStateWithLifecycle()
+    val expenseCategories by viewModel.expenseCategories.collectAsStateWithLifecycle()
 
     var showEditDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showAddTxnDialog by remember { mutableStateOf(false) }
 
     val unpaidBills = remember(bills) { bills.filter { !it.isPaid && !it.isSuperseded } }
     val paidBills = remember(bills) { bills.filter { it.isPaid } }
@@ -101,13 +111,23 @@ fun CardDetailScreen(
                 },
                 windowInsets = WindowInsets(0, 0, 0, 0)
             )
+        },
+        floatingActionButton = {
+            if (card != null) {
+                ExtendedFloatingActionButton(
+                    onClick = { showAddTxnDialog = true },
+                    icon = { Icon(Icons.Default.Add, contentDescription = "Add card spend") },
+                    text = { Text("Add Spend") },
+                    modifier = Modifier.testTag("card_detail_add_spend")
+                )
+            }
         }
     ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentPadding = PaddingValues(bottom = 32.dp),
+            contentPadding = PaddingValues(bottom = 88.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Summary Header Card
@@ -150,6 +170,9 @@ fun CardDetailScreen(
                 items(cardTransactions, key = { "card_tx_${it.id}" }) { tx ->
                     CardTransactionRow(
                         txn = tx,
+                        onDeleteManual = if (tx.smsBody.startsWith("manual:")) {
+                            { viewModel.deleteManualTransaction(tx.id) }
+                        } else null,
                         modifier = Modifier.padding(horizontal = 16.dp)
                     )
                 }
@@ -286,6 +309,20 @@ fun CardDetailScreen(
             dismissButton = {
                 TextButton(onClick = { showDeleteConfirm = false }) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showAddTxnDialog && card != null) {
+        AddCardTransactionDialog(
+            cardName = card!!.displayName,
+            categories = expenseCategories,
+            onDismiss = { showAddTxnDialog = false },
+            onSubmit = { merchant, amount, occurredAt, category, keepOpen ->
+                viewModel.addManualTransaction(merchant, amount, occurredAt, category)
+                if (!keepOpen) {
+                    showAddTxnDialog = false
                 }
             }
         )
@@ -454,6 +491,7 @@ private fun CardSummaryHeader(
 @Composable
 private fun CardTransactionRow(
     txn: CardTransaction,
+    onDeleteManual: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val dateStr = remember(txn.occurredAt) {
@@ -510,6 +548,203 @@ private fun CardTransactionRow(
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
+            if (onDeleteManual != null) {
+                IconButton(
+                    onClick = onDeleteManual,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("card_txn_delete_${txn.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Delete manual transaction",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddCardTransactionDialog(
+    cardName: String,
+    categories: List<String>,
+    onDismiss: () -> Unit,
+    onSubmit: (merchant: String, amount: Double, occurredAt: Long, category: String?, keepOpen: Boolean) -> Unit
+) {
+    var merchant by remember { mutableStateOf("") }
+    var amountText by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf(categories.firstOrNull() ?: "Shopping") }
+    var occurredAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var postedCount by remember { mutableIntStateOf(0) }
+
+    val parsedAmount = amountText.replace(",", "").toDoubleOrNull()
+    val canSubmit = merchant.isNotBlank() && parsedAmount != null && parsedAmount > 0.0
+    val dateLabel = remember(occurredAt) {
+        SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(occurredAt))
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Card Spend • $cardName") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (postedCount > 0) {
+                    Surface(
+                        color = StatusSafe.copy(alpha = 0.14f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "$postedCount spend ${if (postedCount == 1) "entry" else "entries"} added",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = StatusSafe,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = merchant,
+                    onValueChange = { merchant = it },
+                    label = { Text("Merchant / Description") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("card_txn_merchant_input")
+                )
+
+                OutlinedTextField(
+                    value = amountText,
+                    onValueChange = { amountText = it },
+                    label = { Text("Amount (৳)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("card_txn_amount_input")
+                )
+
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = dateLabel,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Date") },
+                        trailingIcon = {
+                            Icon(Icons.Default.CalendarToday, contentDescription = "Select date")
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clickable { showDatePicker = true }
+                            .testTag("card_txn_date_picker_trigger")
+                    )
+                }
+
+                if (categories.isNotEmpty()) {
+                    Text(
+                        text = "Category",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        categories.forEach { cat ->
+                            FilterChip(
+                                selected = selectedCategory == cat,
+                                onClick = { selectedCategory = cat },
+                                label = { Text(cat) }
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                TextButton(
+                    onClick = {
+                        val amt = parsedAmount ?: return@TextButton
+                        onSubmit(merchant, amt, occurredAt, selectedCategory, true)
+                        merchant = ""
+                        amountText = ""
+                        postedCount += 1
+                    },
+                    enabled = canSubmit,
+                    modifier = Modifier.testTag("card_txn_continue_button")
+                ) {
+                    Text("Continue")
+                }
+                Button(
+                    onClick = {
+                        val amt = parsedAmount ?: return@Button
+                        onSubmit(merchant, amt, occurredAt, selectedCategory, false)
+                    },
+                    enabled = canSubmit,
+                    modifier = Modifier.testTag("card_txn_confirm_button")
+                ) {
+                    Text("Add")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(if (postedCount > 0) "Done" else "Cancel")
+            }
+        }
+    )
+
+    if (showDatePicker) {
+        val localCal = remember(occurredAt) {
+            Calendar.getInstance().apply { timeInMillis = occurredAt }
+        }
+        val utcMidnightMillis = remember(occurredAt) {
+            Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                clear()
+                set(localCal.get(Calendar.YEAR), localCal.get(Calendar.MONTH), localCal.get(Calendar.DAY_OF_MONTH))
+            }.timeInMillis
+        }
+        val pickerState = rememberDatePickerState(initialSelectedDateMillis = utcMidnightMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pickerState.selectedDateMillis?.let { selectedUtc ->
+                            val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                                timeInMillis = selectedUtc
+                            }
+                            val updatedLocal = Calendar.getInstance().apply {
+                                timeInMillis = occurredAt
+                                set(Calendar.YEAR, utcCal.get(Calendar.YEAR))
+                                set(Calendar.MONTH, utcCal.get(Calendar.MONTH))
+                                set(Calendar.DAY_OF_MONTH, utcCal.get(Calendar.DAY_OF_MONTH))
+                            }
+                            occurredAt = updatedLocal.timeInMillis
+                        }
+                        showDatePicker = false
+                    }
+                ) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = pickerState)
         }
     }
 }

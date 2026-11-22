@@ -457,7 +457,10 @@ fun CreditCardsScreen(
                                             state.selectedYear,
                                             state.selectedMonth
                                         ),
-                                        onClick = { onCardClick(cardWithStats.card.id) }
+                                        onClick = { onCardClick(cardWithStats.card.id) },
+                                        onPayBill = cardWithStats.nextUnpaidBill?.let { bill ->
+                                            { heroPayBill = bill }
+                                        }
                                     )
                                 }
                             }
@@ -695,7 +698,8 @@ private fun bankBrandGradient(bankName: String?): Brush {
 private fun CardItem(
     stats: CardWithStats,
     periodLabel: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onPayBill: (() -> Unit)? = null
 ) {
     val card = stats.card
     val utilization = if (card.creditLimit > 0) {
@@ -813,18 +817,39 @@ private fun CardItem(
                 }
 
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = if (stats.unpaidBillCount > 0) {
-                        "${stats.unpaidBillCount} unpaid"
-                    } else {
-                        "All paid"
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (stats.overdueBillCount > 0) StatusOverdue
-                    else if (stats.unpaidBillCount > 0) MaterialTheme.colorScheme.primary
-                    else StatusSafe
-                )
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = if (stats.unpaidBillCount > 0) {
+                            "${stats.unpaidBillCount} unpaid"
+                        } else {
+                            "All paid"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (stats.overdueBillCount > 0) StatusOverdue
+                        else if (stats.unpaidBillCount > 0) MaterialTheme.colorScheme.primary
+                        else StatusSafe
+                    )
+                    if (onPayBill != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        FilledTonalButton(
+                            onClick = onPayBill,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .defaultMinSize(minHeight = 40.dp)
+                                .testTag("card_pay_bill_${card.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Payments,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Pay Bill", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
             }
         }
     }

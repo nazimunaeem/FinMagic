@@ -34,6 +34,15 @@ data class ExtractedFields(
     val counterparty: String? = null
 )
 
+data class AccountTemplate(
+    val name: String,
+    val kind: String,
+    val bankName: String = "",
+    val accountMask: String = "",
+    val currency: String = "BDT",
+    val includeInTotal: Boolean = true
+)
+
 class SmsTeachingEngine @Inject constructor(
     private val ruleDao: SmsTeachingRuleDao,
     private val ruleApplicationDao: SmsRuleApplicationDao,
@@ -50,13 +59,14 @@ class SmsTeachingEngine @Inject constructor(
         val rules = ruleDao.getEnabledOnce()
         val match = findBestMatch(rules, sender, normalizedBody) ?: return false
 
-        val applied = applyRule(match, record)
+        val (applied, txnId) = applyRule(match, record)
         if (applied) {
             ruleDao.incrementMatchCount(match.id)
             ruleApplicationDao.insert(
                 SmsRuleApplication(
                     ruleId = match.id,
-                    smsRecordId = record.id
+                    smsRecordId = record.id,
+                    transactionId = txnId
                 )
             )
         }
@@ -65,27 +75,29 @@ class SmsTeachingEngine @Inject constructor(
 
     /**
      * Applies a specific [rule] to all matching unparsed [unparsedRecords].
-     * Returns the count of records that were successfully processed and applied.
+     * Returns the list of SMS record IDs that were successfully processed and applied.
      */
-    suspend fun applyRuleToHistorical(rule: SmsTeachingRule, unparsedRecords: List<SmsRecord>): Int {
-        var appliedCount = 0
+    suspend fun applyRuleToHistorical(rule: SmsTeachingRule, unparsedRecords: List<SmsRecord>): List<Long> {
+        val appliedIds = mutableListOf<Long>()
         for (record in unparsedRecords) {
             val normalizedBody = normalizeText(record.body)
             val sender = record.address?.trim()?.uppercase()
             if (matchesRule(rule, sender, normalizedBody)) {
-                if (applyRule(rule, record)) {
+                val (applied, txnId) = applyRule(rule, record)
+                if (applied) {
                     ruleDao.incrementMatchCount(rule.id)
                     ruleApplicationDao.insert(
                         SmsRuleApplication(
                             ruleId = rule.id,
-                            smsRecordId = record.id
+                            smsRecordId = record.id,
+                            transactionId = txnId
                         )
                     )
-                    appliedCount++
+                    appliedIds.add(record.id)
                 }
             }
         }
-        return appliedCount
+        return appliedIds
     }
 
     /**
@@ -115,17 +127,26 @@ class SmsTeachingEngine @Inject constructor(
         return bestMatch
     }
 
-    private suspend fun applyRule(rule: SmsTeachingRule, record: SmsRecord): Boolean {
+    private suspend fun resolveRuleAccountId(rule: SmsTeachingRule): Long {
+        if (rule.accountId > 0L && accountRepository.getAccountOnce(rule.accountId) != null) {
+            return rule.accountId
+        }
+        val template = TemplateJson.decode(rule.accountTemplateJson) ?: return rule.accountId
+        return accountRepository.resolveOrCreateFromTemplate(template) ?: rule.accountId
+    }
+
+    private suspend fun applyRule(rule: SmsTeachingRule, record: SmsRecord): Pair<Boolean, Long?> {
         // Extract fields using rule patterns if available, fall back to generic extraction
         val extracted = extractFieldsWithPatterns(rule, record.body)
-        
+
         return when (rule.action) {
-            SmsTeachingRule.ACTION_IGNORE -> true
+            SmsTeachingRule.ACTION_IGNORE -> true to null
 
             SmsTeachingRule.ACTION_CREDIT -> {
-                val amount = extracted.amount ?: return false
-                accountRepository.storeManualToAccount(
-                    accountId = rule.accountId,
+                val amount = extracted.amount ?: return false to null
+                val targetAccountId = resolveRuleAccountId(rule)
+                val txnId = accountRepository.storeManualToAccount(
+                    accountId = targetAccountId,
                     direction = AccountTransaction.DIRECTION_IN,
                     amount = amount,
                     occurredAt = extracted.date ?: record.timestamp,
@@ -134,13 +155,15 @@ class SmsTeachingEngine @Inject constructor(
                     smsBody = record.body,
                     smsRecordId = record.id,
                     balanceAfter = extracted.balance
-                ) != null
+                )
+                (txnId != null) to txnId
             }
 
             SmsTeachingRule.ACTION_DEBIT -> {
-                val amount = extracted.amount ?: return false
-                accountRepository.storeManualToAccount(
-                    accountId = rule.accountId,
+                val amount = extracted.amount ?: return false to null
+                val targetAccountId = resolveRuleAccountId(rule)
+                val txnId = accountRepository.storeManualToAccount(
+                    accountId = targetAccountId,
                     direction = AccountTransaction.DIRECTION_OUT,
                     amount = amount,
                     occurredAt = extracted.date ?: record.timestamp,
@@ -149,11 +172,12 @@ class SmsTeachingEngine @Inject constructor(
                     smsBody = record.body,
                     smsRecordId = record.id,
                     balanceAfter = extracted.balance
-                ) != null
+                )
+                (txnId != null) to txnId
             }
 
             SmsTeachingRule.ACTION_ATM_WITHDRAWAL -> {
-                val amount = extracted.amount ?: return false
+                val amount = extracted.amount ?: return false to null
                 val entry = LedgerEntry(
                     institution = "",
                     kind = AccountKind.BANK,
@@ -163,11 +187,12 @@ class SmsTeachingEngine @Inject constructor(
                     occurredAt = extracted.date ?: record.timestamp,
                     balanceAfter = extracted.balance
                 )
-                accountRepository.storeAtmWithdraw(entry, record.body, record.id) != null
+                val txnId = accountRepository.storeAtmWithdraw(entry, record.body, record.id)
+                (txnId != null) to txnId
             }
 
             SmsTeachingRule.ACTION_TRANSFER -> {
-                val amount = extracted.amount ?: return false
+                val amount = extracted.amount ?: return false to null
                 val fromEntry = LedgerEntry(
                     institution = "",
                     kind = AccountKind.BANK,
@@ -186,18 +211,35 @@ class SmsTeachingEngine @Inject constructor(
                     occurredAt = extracted.date ?: record.timestamp,
                     balanceAfter = extracted.balance
                 )
-                accountRepository.storeTransferPair(fromEntry, toEntry, record.body, record.id) != null
+                val txnId = accountRepository.storeTransferPair(fromEntry, toEntry, record.body, record.id)
+                (txnId != null) to txnId
             }
 
             SmsTeachingRule.ACTION_BALANCE_ONLY -> {
-                true
+                true to null
             }
 
-            else -> false
+            else -> false to null
         }
     }
 
     companion object {
+        object TemplateJson {
+            private val gson = com.google.gson.Gson()
+
+            fun encode(template: AccountTemplate): String = gson.toJson(template)
+
+            fun decode(json: String?): AccountTemplate? {
+                if (json.isNullOrBlank()) return null
+                return try {
+                    val parsed = gson.fromJson(json, AccountTemplate::class.java) ?: return null
+                    if (parsed.name.isBlank()) null else parsed
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        }
+
         /** Generic amount extraction from common Bangladeshi SMS formats (plan §4). */
         private val amountRegex = Regex(
             """(?:Tk|BDT|Tk\.|BDT\.)\s*([\d,]+(?:\.\d+)?)""",
@@ -371,12 +413,13 @@ class SmsTeachingEngine @Inject constructor(
             return bestMatch
         }
 
-        private fun matchesRule(rule: SmsTeachingRule, sender: String?, normalizedBody: String): Boolean {
-            if (rule.senderKey?.isNotBlank() == true) {
-                if (sender == null || !sender.contains(rule.senderKey.uppercase())) return false
-            }
-            // Use JSON-decoded keyword lists (Plan §3)
+        fun matchesRule(rule: SmsTeachingRule, sender: String?, normalizedBody: String): Boolean {
+            val senderKey = rule.senderKey?.takeIf { it.isNotBlank() }
             val required = rule.requiredKeywordsList
+            if (senderKey == null && required.isEmpty()) return false
+            if (senderKey != null) {
+                if (sender == null || !sender.contains(senderKey.uppercase())) return false
+            }
             if (required.any { !normalizedBody.contains(it, ignoreCase = true) }) return false
             val excluded = rule.excludedKeywordsList
             if (excluded.any { normalizedBody.contains(it, ignoreCase = true) }) return false

@@ -117,6 +117,33 @@ class AccountRepository @Inject constructor(
         return inserted
     }
 
+    /** Finds or recreates an account from a saved [com.finmagic.data.sms.AccountTemplate]. */
+    suspend fun resolveOrCreateFromTemplate(template: com.finmagic.data.sms.AccountTemplate): Long? {
+        if (template.kind.equals(Account.KIND_CASH, ignoreCase = true)) {
+            return ensureCashAccount().id
+        }
+        val existing = accountDao.findByInstitutionAndMask(template.bankName, template.accountMask)
+        if (existing != null) {
+            if (existing.isArchived) accountDao.setArchived(existing.id, false)
+            return existing.id
+        }
+        val rowId = accountDao.insert(
+            Account(
+                name = template.name.trim(),
+                kind = template.kind,
+                bankName = template.bankName,
+                accountMask = template.accountMask,
+                currency = template.currency.ifBlank { "BDT" },
+                includeInTotal = template.includeInTotal
+            )
+        )
+        return if (rowId > 0L) {
+            rowId
+        } else {
+            accountDao.findByInstitutionAndMask(template.bankName, template.accountMask)?.id
+        }
+    }
+
     // ---------------------------------------------------------------- storage
 
     /**

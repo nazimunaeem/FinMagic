@@ -27,4 +27,7 @@ interface CardTransactionDao {
 
     @Query("SELECT MIN(occurredAt) FROM card_transactions")
     suspend fun getEarliestOccurredAt(): Long?
+
+    @Query("DELETE FROM card_transactions WHERE id = :id AND smsBody LIKE 'manual:%'")
+    suspend fun deleteManualById(id: Long)
 }

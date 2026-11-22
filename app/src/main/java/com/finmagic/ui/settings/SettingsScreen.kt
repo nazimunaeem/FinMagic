@@ -398,7 +398,7 @@ fun SettingsScreen(
                 SettingsItem(
                     icon = Icons.Default.Share,
                     title = "Export All Data",
-                    description = "Save all bills and transaction history to a CSV file",
+                    description = "Export accounts, transactions, card spend, and bills to CSV",
                     onClick = { if (exportState !is ExportState.Loading) viewModel.exportData() },
                     trailing = {
                         if (exportState is ExportState.Loading) {
@@ -418,15 +418,22 @@ fun SettingsScreen(
                                     putExtra(Intent.EXTRA_STREAM, uri)
                                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                 }
-                                context.startActivity(Intent.createChooser(shareIntent, "Export Bills"))
+                                context.startActivity(Intent.createChooser(shareIntent, "Export FinMagic Data"))
                                 viewModel.resetExportState()
                             },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().testTag("settings_share_csv_button"),
                             shape = RoundedCornerShape(8.dp)
                         ) {
                             Text("Share CSV File")
                         }
                     }
+                } else if (exportState is ExportState.Error) {
+                    Text(
+                        text = (exportState as ExportState.Error).message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 12.dp)
+                    )
                 }
             }
 

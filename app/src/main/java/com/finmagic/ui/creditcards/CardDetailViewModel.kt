@@ -3,6 +3,7 @@ package com.finmagic.ui.creditcards
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.finmagic.data.local.PreferenceManager
 import com.finmagic.data.local.dao.CardPaymentDao
 import com.finmagic.data.local.dao.CardTransactionDao
 import com.finmagic.data.local.entity.BillWithCard
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Calendar
+import java.util.UUID
 import javax.inject.Inject
 
 @HiltViewModel
@@ -29,8 +31,16 @@ class CardDetailViewModel @Inject constructor(
     private val cardRepository: CardRepository,
     private val billRepository: BillRepository,
     private val cardPaymentDao: CardPaymentDao,
-    private val cardTransactionDao: CardTransactionDao
+    private val cardTransactionDao: CardTransactionDao,
+    preferenceManager: PreferenceManager
 ) : ViewModel() {
+
+    val expenseCategories: StateFlow<List<String>> = preferenceManager.cashExpenseCategories
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            listOf("Food", "Shopping", "Transport", "Bill", "Entertainment", "Health", "Other")
+        )
 
     val cardId: Long = savedStateHandle.get<Long>("cardId")
         ?: savedStateHandle.get<String>("cardId")?.toLongOrNull()
@@ -220,5 +230,35 @@ class CardDetailViewModel @Inject constructor(
 
     fun editBill(billId: Long, totalDue: Double, minDue: Double, dueDate: String) {
         viewModelScope.launch { billRepository.updateBillDetails(billId, totalDue, minDue, dueDate) }
+    }
+
+    fun addManualTransaction(
+        merchant: String,
+        amount: Double,
+        occurredAt: Long,
+        category: String?
+    ) {
+        val currentCard = _card.value ?: return
+        val trimmedMerchant = merchant.trim()
+        if (trimmedMerchant.isEmpty() || amount <= 0.0) return
+        viewModelScope.launch {
+            cardTransactionDao.insert(
+                CardTransaction(
+                    cardTail = currentCard.cardLast4,
+                    bankName = currentCard.bankName,
+                    merchant = trimmedMerchant,
+                    amount = amount,
+                    occurredAt = occurredAt,
+                    category = category?.trim()?.ifBlank { null },
+                    smsBody = "manual:${UUID.randomUUID()}"
+                )
+            )
+        }
+    }
+
+    fun deleteManualTransaction(txnId: Long) {
+        viewModelScope.launch {
+            cardTransactionDao.deleteManualById(txnId)
+        }
     }
 }

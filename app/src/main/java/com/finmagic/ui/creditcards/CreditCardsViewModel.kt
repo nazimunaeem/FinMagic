@@ -130,7 +130,8 @@ data class CardWithStats(
     val unpaidBillCount: Int = 0,
     val overdueBillCount: Int = 0,
     val totalPaid: Double = 0.0,
-    val totalUnpaid: Double = 0.0
+    val totalUnpaid: Double = 0.0,
+    val nextUnpaidBill: BillWithCard? = null
 )
 
 data class CardSummaryRow(
@@ -379,7 +380,8 @@ class CreditCardsViewModel @Inject constructor(
                             unpaidBillCount = unpaid.size,
                             overdueBillCount = unpaid.count { it.dueStatus == DueStatus.OVERDUE },
                             totalPaid = periodBills.sumOf { it.paidAmount },
-                            totalUnpaid = unpaid.sumOf { it.totalDue - it.paidAmount }
+                            totalUnpaid = unpaid.sumOf { it.totalDue - it.paidAmount },
+                            nextUnpaidBill = sortBills(unpaid).firstOrNull()
                         )
                     }.sortedWith(
                         compareByDescending<CardWithStats> { it.overdueBillCount > 0 }
