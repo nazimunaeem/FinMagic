@@ -40,3 +40,9 @@ Thumbs.db
 # APK / bundle outputs
 *.apk
 *.aab
+
+# Local scratch / IDE metadata
+.MyOllamaEnhancer/
+.artifacts/
+workspace/
+*.duckdb
