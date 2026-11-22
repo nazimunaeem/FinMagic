@@ -2,6 +2,9 @@ name: Release Debug APK
 
 on:
   push:
+    branches:
+      - main
+      - master
     tags:
       - 'v*'
   workflow_dispatch:
@@ -82,6 +85,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.apk.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: FinMagic ${{ steps.apk.outputs.tag }} (Debug)
           prerelease: true
           generate_release_notes: true
