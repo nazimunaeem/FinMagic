@@ -60,18 +60,10 @@ sealed class Screen(
         unselectedIcon = Icons.Outlined.Sms
     )
 
-    data object Stats : Screen(
-        route = "stats",
-        title = "Stats",
-        selectedIcon = Icons.Filled.Dashboard,
-        unselectedIcon = Icons.Outlined.Dashboard
-    )
-
 }
 
 val bottomNavScreens = listOf(
     Screen.Home,
     Screen.Expenses,
-    Screen.Stats,
     Screen.Settings
 )

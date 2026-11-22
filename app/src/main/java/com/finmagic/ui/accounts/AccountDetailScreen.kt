@@ -22,11 +22,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DatePicker
@@ -36,8 +38,13 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -51,7 +58,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -62,6 +71,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -191,14 +201,18 @@ fun AccountDetailScreen(
                                 historyYear = y
                             },
                             onNext = {
+                                val curY = nowCal.get(Calendar.YEAR)
+                                val curM = nowCal.get(Calendar.MONTH)
                                 var m = historyMonth + 1
                                 var y = historyYear
                                 if (m > 11) { m = 0; y += 1 }
-                                historyMonth = m
-                                historyYear = y
+                                if (y < curY || (y == curY && m <= curM)) {
+                                    historyMonth = m
+                                    historyYear = y
+                                }
                             },
-                            nextEnabled = !(historyYear == nowCal.get(Calendar.YEAR) &&
-                                historyMonth == nowCal.get(Calendar.MONTH))
+                            nextEnabled = (historyYear < nowCal.get(Calendar.YEAR)) ||
+                                (historyYear == nowCal.get(Calendar.YEAR) && historyMonth < nowCal.get(Calendar.MONTH))
                         )
                     }
                     if (dayGroups.isEmpty()) {
@@ -251,11 +265,9 @@ fun AccountDetailScreen(
             onDismiss = { showEntryDialog = false },
             onAddExpense = { amount, note, category, occurredAt ->
                 viewModel.addCashEntry(AccountTransaction.DIRECTION_OUT, amount, note, category, occurredAt)
-                showEntryDialog = false
             },
             onAddIncome = { amount, note, category, occurredAt ->
                 viewModel.addCashEntry(AccountTransaction.DIRECTION_IN, amount, note, category, occurredAt)
-                showEntryDialog = false
             },
             onTransfer = {
                 showEntryDialog = false
@@ -422,10 +434,12 @@ private fun CashEntryDialog(
     onAddIncome: (Double, String?, String?, Long) -> Unit,
     onTransfer: () -> Unit
 ) {
+    var mode by remember { mutableStateOf("EXPENSE") }
     var amountText by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
-    var expenseCategory by remember { mutableStateOf<String?>(null) }
-    var incomeCategory by remember { mutableStateOf<String?>(null) }
+    var category by remember { mutableStateOf<String?>(null) }
+    var postedCount by remember { mutableIntStateOf(0) }
+    var lastPostedMessage by remember { mutableStateOf<String?>(null) }
     var occurredAt by remember {
         mutableStateOf(Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 12)
@@ -435,70 +449,152 @@ private fun CashEntryDialog(
         }.timeInMillis)
     }
     var showDatePicker by remember { mutableStateOf(false) }
-    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = occurredAt)
+    val initialUtcMillis = remember(occurredAt) {
+        val local = Calendar.getInstance().apply { timeInMillis = occurredAt }
+        Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            clear()
+            set(local.get(Calendar.YEAR), local.get(Calendar.MONTH), local.get(Calendar.DAY_OF_MONTH))
+        }.timeInMillis
+    }
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialUtcMillis)
     val amount = amountText.replace(",", "").toDoubleOrNull()
+    val canSubmit = amount != null && amount > 0
+    val activeCategories = if (mode == "INCOME") incomeCategories else expenseCategories
+
+    fun submitCurrent() {
+        val value = amount ?: return
+        val trimmedNote = note.ifBlank { null }
+        if (mode == "EXPENSE") {
+            onAddExpense(value, trimmedNote, category, occurredAt)
+        } else {
+            onAddIncome(value, trimmedNote, category, occurredAt)
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Cash Entry") },
+        title = { Text("Add Entry") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                if (postedCount > 0 && lastPostedMessage != null) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = StatusSafe.copy(alpha = 0.14f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = StatusSafe,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "$lastPostedMessage ($postedCount saved)",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = StatusSafe
+                            )
+                        }
+                    }
+                }
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    SegmentedButton(
+                        selected = mode == "EXPENSE",
+                        onClick = { mode = "EXPENSE"; category = null },
+                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                    ) { Text("Expense") }
+                    SegmentedButton(
+                        selected = mode == "INCOME",
+                        onClick = { mode = "INCOME"; category = null },
+                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                    ) { Text("Income") }
+                }
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { amountText = it },
                     label = { Text("Amount") },
-                    singleLine = true
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
-                    value = SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date(occurredAt)),
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Date") },
-                    trailingIcon = {
-                        Icon(Icons.Default.CalendarMonth, contentDescription = "Pick date")
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showDatePicker = true },
-                    singleLine = true
-                )
-                Text("Expense category", style = MaterialTheme.typography.labelMedium)
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date(occurredAt)),
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Date") },
+                        trailingIcon = {
+                            IconButton(onClick = { showDatePicker = true }) {
+                                Icon(Icons.Default.CalendarMonth, contentDescription = "Pick date")
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clickable { showDatePicker = true }
+                    )
+                }
+                Text("Category", style = MaterialTheme.typography.labelMedium)
                 CategorySelector(
-                    categories = expenseCategories,
-                    selected = expenseCategory,
-                    onSelected = { expenseCategory = it }
-                )
-                Text("Income category", style = MaterialTheme.typography.labelMedium)
-                CategorySelector(
-                    categories = incomeCategories,
-                    selected = incomeCategory,
-                    onSelected = { incomeCategory = it }
+                    categories = activeCategories,
+                    selected = category,
+                    onSelected = { category = it }
                 )
                 OutlinedTextField(
                     value = note,
                     onValueChange = { note = it },
                     label = { Text("Note (optional)") },
-                    singleLine = true
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         },
         confirmButton = {
-            Row {
-                TextButton(enabled = amount != null && amount > 0, onClick = { onAddExpense(amount!!, note.ifBlank { null }, expenseCategory, occurredAt) }) {
-                    Text("Expense", color = MaterialTheme.colorScheme.error)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    enabled = canSubmit,
+                    onClick = {
+                        val value = amount ?: return@OutlinedButton
+                        submitCurrent()
+                        postedCount += 1
+                        val label = if (mode == "EXPENSE") "Expense" else "Income"
+                        lastPostedMessage = "$label Tk ${String.format(Locale.US, "%,.0f", value)} posted"
+                        amountText = ""
+                        note = ""
+                    },
+                    modifier = Modifier.testTag("cash_entry_continue_button")
+                ) {
+                    Text("Continue")
                 }
-                TextButton(enabled = amount != null && amount > 0, onClick = { onAddIncome(amount!!, note.ifBlank { null }, incomeCategory, occurredAt) }) {
-                    Text("Income", color = StatusSafe)
+                Button(
+                    enabled = canSubmit,
+                    onClick = {
+                        submitCurrent()
+                        onDismiss()
+                    },
+                    modifier = Modifier.testTag("cash_entry_confirm_button")
+                ) {
+                    Text("Confirm")
                 }
             }
         },
         dismissButton = {
             Row {
                 TextButton(onClick = onTransfer) { Text("Transfer") }
-                TextButton(onClick = onDismiss) { Text("Cancel") }
+                TextButton(onClick = onDismiss) {
+                    Text(if (postedCount > 0) "Done" else "Cancel")
+                }
             }
         }
     )
@@ -509,8 +605,14 @@ private fun CashEntryDialog(
             confirmButton = {
                 TextButton(onClick = {
                     datePickerState.selectedDateMillis?.let { picked ->
-                        occurredAt = Calendar.getInstance().apply {
+                        val utc = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
                             timeInMillis = picked
+                        }
+                        occurredAt = Calendar.getInstance().apply {
+                            timeInMillis = occurredAt
+                            set(Calendar.YEAR, utc.get(Calendar.YEAR))
+                            set(Calendar.MONTH, utc.get(Calendar.MONTH))
+                            set(Calendar.DAY_OF_MONTH, utc.get(Calendar.DAY_OF_MONTH))
                             set(Calendar.HOUR_OF_DAY, 12)
                             set(Calendar.MINUTE, 0)
                             set(Calendar.SECOND, 0)
@@ -529,6 +631,7 @@ private fun CashEntryDialog(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TransferDialog(
     viewModel: AccountDetailViewModel,
@@ -538,6 +641,16 @@ private fun TransferDialog(
     var amountText by remember { mutableStateOf("") }
     var selectedId by remember { mutableStateOf<Long?>(null) }
     var fromCash by remember { mutableStateOf(true) }
+    var occurredAt by remember { mutableStateOf(System.currentTimeMillis()) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val initialUtcMillis = remember(occurredAt) {
+        val local = Calendar.getInstance().apply { timeInMillis = occurredAt }
+        Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            clear()
+            set(local.get(Calendar.YEAR), local.get(Calendar.MONTH), local.get(Calendar.DAY_OF_MONTH))
+        }.timeInMillis
+    }
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialUtcMillis)
     val amount = amountText.replace(",", "").toDoubleOrNull()
 
     AlertDialog(
@@ -554,6 +667,26 @@ private fun TransferDialog(
                     label = { Text("Amount") },
                     singleLine = true
                 )
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date(occurredAt)),
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Date") },
+                        trailingIcon = {
+                            IconButton(onClick = { showDatePicker = true }) {
+                                Icon(Icons.Default.CalendarMonth, contentDescription = "Pick date")
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clickable { showDatePicker = true }
+                    )
+                }
                 Text("Direction", style = MaterialTheme.typography.labelMedium)
                 Row {
                     androidx.compose.material3.FilterChip(
@@ -574,6 +707,7 @@ private fun TransferDialog(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clickable { selectedId = acct.id }
                                 .padding(vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -591,7 +725,7 @@ private fun TransferDialog(
             TextButton(
                 enabled = amount != null && amount > 0 && selectedId != null,
                 onClick = {
-                    viewModel.addTransfer(selectedId!!, fromCash, amount!!)
+                    viewModel.addTransfer(selectedId!!, fromCash, amount!!, occurredAt)
                     onDismiss()
                 }
             ) { Text("Transfer") }
@@ -600,6 +734,33 @@ private fun TransferDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { picked ->
+                        val utc = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                            timeInMillis = picked
+                        }
+                        occurredAt = Calendar.getInstance().apply {
+                            timeInMillis = occurredAt
+                            set(Calendar.YEAR, utc.get(Calendar.YEAR))
+                            set(Calendar.MONTH, utc.get(Calendar.MONTH))
+                            set(Calendar.DAY_OF_MONTH, utc.get(Calendar.DAY_OF_MONTH))
+                        }.timeInMillis
+                    }
+                    showDatePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 }
 
 @Composable

@@ -17,7 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Search
@@ -128,7 +128,15 @@ fun ExpensesScreen(viewModel: ExpensesViewModel = hiltViewModel()) {
             }
 
             state.stats?.let { stats ->
-                if (stats.categories.isNotEmpty()) {
+                if (stats.count > 0 || stats.total > 0) {
+                    item {
+                        StatsCard(
+                            stats = stats,
+                            categoryNicknames = categoryNicknames
+                        )
+                    }
+                }
+                if (stats.categories.isNotEmpty() || searchQuery.isNotEmpty()) {
                     item {
                         ExpenseFilters(
                             categories = categoryNames,
@@ -139,6 +147,8 @@ fun ExpensesScreen(viewModel: ExpensesViewModel = hiltViewModel()) {
                             categoryNicknames = categoryNicknames
                         )
                     }
+                }
+                if (stats.categories.isNotEmpty()) {
                     item {
                         CategoryBreakdown(
                             categories = stats.categories,
@@ -216,15 +226,20 @@ private fun MonthYearSelector(
     availableYears: List<Int>
 ) {
     var showPicker by remember { mutableStateOf(false) }
+    val nowCal = remember { Calendar.getInstance() }
+    val canStepNext = state.year < nowCal.get(Calendar.YEAR) ||
+        (state.year == nowCal.get(Calendar.YEAR) && state.month < nowCal.get(Calendar.MONTH) + 1)
 
     Card(
-        modifier = Modifier.fillMaxWidth().height(56.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        modifier = Modifier.fillMaxWidth().height(52.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(8.dp),
+                .padding(horizontal = 4.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -237,7 +252,7 @@ private fun MonthYearSelector(
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.clickable { showPicker = true }
             )
-            IconButton(onClick = viewModel::stepNext) {
+            IconButton(onClick = viewModel::stepNext, enabled = canStepNext) {
                 Icon(Icons.Filled.KeyboardArrowRight, contentDescription = "Next month")
             }
         }
@@ -406,29 +421,30 @@ private fun ExpenseFilters(
     onQueryChange: (String) -> Unit,
     categoryNicknames: Map<String, String> = emptyMap()
 ) {
-    var showCategories by rememberSaveable { mutableStateOf(false) }
-
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Filters", style = MaterialTheme.typography.titleSmall)
-            IconButton(onClick = { showCategories = !showCategories }) {
-                Icon(
-                    imageVector = Icons.Default.Menu,
-                    contentDescription = "Toggle category filter"
-                )
-            }
-        }
-        if (showCategories && categories.isNotEmpty()) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            placeholder = { Text("Search expenses…", style = MaterialTheme.typography.bodySmall) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+            trailingIcon = {
+                if (query.isNotEmpty()) {
+                    IconButton(onClick = { onQueryChange("") }) {
+                        Icon(Icons.Default.Close, contentDescription = "Clear")
+                    }
+                }
+            },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (categories.isNotEmpty()) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
                     FilterChip(
                         selected = selectedCategory == null,
                         onClick = { onCategorySelected(null) },
-                        label = { Text("All categories") }
+                        label = { Text("All") }
                     )
                 }
                 items(categories) { cat ->

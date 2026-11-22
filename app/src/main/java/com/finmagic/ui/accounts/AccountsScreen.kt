@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -45,6 +46,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,17 +67,17 @@ fun AccountsScreen(
     var detailTxn by remember { mutableStateOf<AccountTransactionWithAccount?>(null) }
     var editTxn by remember { mutableStateOf<AccountTransaction?>(null) }
     var selectedTab by rememberSaveable { mutableIntStateOf(initialTab) }
+    LaunchedEffect(initialTab) { selectedTab = initialTab }
 
-    // Shared month context for both tabs (month is 0-based).
+    val pagerYear by viewModel.selectedYear.collectAsStateWithLifecycle()
+    val pagerMonth by viewModel.selectedMonth.collectAsStateWithLifecycle()
     val nowCal = remember { Calendar.getInstance() }
-    var pagerYear by rememberSaveable { mutableIntStateOf(nowCal.get(Calendar.YEAR)) }
-    var pagerMonth by rememberSaveable { mutableIntStateOf(nowCal.get(Calendar.MONTH)) }
+    val nextEnabled = (pagerYear < nowCal.get(Calendar.YEAR)) ||
+        (pagerYear == nowCal.get(Calendar.YEAR) && pagerMonth < nowCal.get(Calendar.MONTH))
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var categoryFilter by rememberSaveable { mutableStateOf<String?>(null) }
 
-    // Keep the ViewModel's month (header + summaries) in sync with the pager.
-    LaunchedEffect(pagerYear, pagerMonth) { viewModel.setSelectedMonth(pagerYear, pagerMonth) }
     LaunchedEffect(Unit) { viewModel.ensureCashAccount() }
 
     val headerMonthLabel = remember(pagerYear, pagerMonth) {
@@ -100,8 +102,6 @@ fun AccountsScreen(
     }
     val filteredMonthTxns = remember(monthTxns, state.recentTransactions, searchQuery, categoryFilter) {
         val q = searchQuery.trim()
-        // When a search query is active, look across ALL transactions, not just
-        // the visible month, so older entries are still findable.
         val base = if (q.isEmpty()) monthTxns else state.recentTransactions
         base.filter { txn ->
             val matchesCategory = categoryFilter == null || categoryFilter == txn.category
@@ -136,13 +136,42 @@ fun AccountsScreen(
             }
         } else {
             {}
+        },
+        floatingActionButton = {
+            if (showPill) {
+                FloatingActionButton(
+                    onClick = { showAddDialog = true },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Entry")
+                }
+            }
         }
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            if (showPill) {
+                SingleChoiceSegmentedButtonRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                ) {
+                    SegmentedButton(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0; onTabSelected(0) },
+                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                    ) { Text("History") }
+                    SegmentedButton(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1; onTabSelected(1) },
+                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                    ) { Text("Accounts") }
+                }
+            }
             LazyColumn(
                 contentPadding = PaddingValues(
-                    top = padding.calculateTopPadding(),
-                    bottom = 120.dp + padding.calculateBottomPadding()
+                    top = 4.dp,
+                    bottom = if (showPill) 88.dp else 88.dp
                 ),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxSize()
@@ -153,22 +182,9 @@ fun AccountsScreen(
                         MonthPager(
                             year = pagerYear,
                             month = pagerMonth,
-                            onPrevious = {
-                                var m = pagerMonth - 1
-                                var y = pagerYear
-                                if (m < 0) { m = 11; y -= 1 }
-                                pagerMonth = m
-                                pagerYear = y
-                            },
-                            onNext = {
-                                var m = pagerMonth + 1
-                                var y = pagerYear
-                                if (m > 11) { m = 0; y += 1 }
-                                pagerMonth = m
-                                pagerYear = y
-                            },
-                            nextEnabled = !(pagerYear == nowCal.get(Calendar.YEAR) &&
-                                pagerMonth == nowCal.get(Calendar.MONTH))
+                            onPrevious = viewModel::stepPreviousMonth,
+                            onNext = viewModel::stepNextMonth,
+                            nextEnabled = nextEnabled
                         )
                     }
 
@@ -243,22 +259,9 @@ fun AccountsScreen(
                         MonthPager(
                             year = pagerYear,
                             month = pagerMonth,
-                            onPrevious = {
-                                var m = pagerMonth - 1
-                                var y = pagerYear
-                                if (m < 0) { m = 11; y -= 1 }
-                                pagerMonth = m
-                                pagerYear = y
-                            },
-                            onNext = {
-                                var m = pagerMonth + 1
-                                var y = pagerYear
-                                if (m > 11) { m = 0; y += 1 }
-                                pagerMonth = m
-                                pagerYear = y
-                            },
-                            nextEnabled = !(pagerYear == nowCal.get(Calendar.YEAR) &&
-                                pagerMonth == nowCal.get(Calendar.MONTH))
+                            onPrevious = viewModel::stepPreviousMonth,
+                            onNext = viewModel::stepNextMonth,
+                            nextEnabled = nextEnabled
                         )
                     }
                     item {
@@ -356,50 +359,6 @@ fun AccountsScreen(
                                 )
                             }
                         }
-                    }
-                }
-            }
-
-            // Floating Pill Tab
-            if (showPill) Surface(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 32.dp)
-                    .zIndex(1f),
-                shape = RoundedCornerShape(50.dp),
-                color = MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp),
-                tonalElevation = 6.dp,
-                shadowElevation = 8.dp
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // History Icon
-                    PillTabItem(
-                        selected = selectedTab == 0,
-                        icon = if (selectedTab == 0) Icons.Filled.History else Icons.Outlined.History,
-                        onClick = { selectedTab = 0; onTabSelected(0) }
-                    )
-
-                    // Accounts Icon
-                    PillTabItem(
-                        selected = selectedTab == 1,
-                        icon = if (selectedTab == 1) Icons.Filled.AccountBalance else Icons.Outlined.AccountBalance,
-                        onClick = { selectedTab = 1; onTabSelected(1) }
-                    )
-
-                    // Add Icon (The Fab in the Pill)
-                    FloatingActionButton(
-                        onClick = { showAddDialog = true },
-                        modifier = Modifier.size(48.dp),
-                        shape = CircleShape,
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp, 0.dp, 0.dp)
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "Add Entry")
                     }
                 }
             }
@@ -546,12 +505,40 @@ internal fun AddEntryDialog(
     val activeCategories = if (mode == "INCOME") incomeCategories else expenseCategories
     var occurredAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var showDatePicker by remember { mutableStateOf(false) }
-    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = occurredAt)
+    val initialUtcMillis = remember(occurredAt) {
+        val local = Calendar.getInstance().apply { timeInMillis = occurredAt }
+        Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            clear()
+            set(local.get(Calendar.YEAR), local.get(Calendar.MONTH), local.get(Calendar.DAY_OF_MONTH))
+        }.timeInMillis
+    }
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialUtcMillis)
 
     // For Transfer
     var targetAccountId by remember { mutableStateOf<Long?>(null) }
     var creditItems by remember { mutableStateOf<List<AccountTransaction>>(emptyList()) }
     var selectedCreditId by remember { mutableStateOf<Long?>(null) }
+
+    var postedCount by remember { mutableIntStateOf(0) }
+    var lastPostedMessage by remember { mutableStateOf<String?>(null) }
+
+    val canSubmit = amount > 0 && (mode != "TRANSFER" || targetAccountId != null)
+
+    fun submitCurrentEntry() {
+        val enteredAmount = amount
+        val enteredNote = note.ifBlank { null }
+        val enteredCategory = category
+        val enteredDate = occurredAt
+        val enteredTargetId = targetAccountId
+        val enteredCreditId = selectedCreditId
+        when (mode) {
+            "EXPENSE" -> viewModel.addCashExpense(enteredAmount, enteredNote, enteredCategory, enteredDate)
+            "INCOME" -> viewModel.addCashIncome(enteredAmount, enteredNote, enteredCategory, enteredDate)
+            "TRANSFER" -> if (enteredTargetId != null) {
+                viewModel.addManualTransfer(enteredTargetId, enteredAmount, enteredCreditId, enteredDate)
+            }
+        }
+    }
 
     LaunchedEffect(mode) { category = null }
 
@@ -573,6 +560,32 @@ internal fun AddEntryDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                if (postedCount > 0 && lastPostedMessage != null) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = StatusSafe.copy(alpha = 0.14f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = StatusSafe,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "${lastPostedMessage} ($postedCount saved)",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = StatusSafe
+                            )
+                        }
+                    }
+                }
                 // Mode Selector
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     SegmentedButton(
@@ -603,20 +616,27 @@ internal fun AddEntryDialog(
                 )
 
                 val dateText = SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date(occurredAt))
-                OutlinedTextField(
-                    value = dateText,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Date") },
-                    trailingIcon = {
-                        Icon(Icons.Default.CalendarMonth, contentDescription = "Pick date")
-                    },
-                    placeholder = { Text("Tap to pick") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showDatePicker = true },
-                    singleLine = true
-                )
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = dateText,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Date") },
+                        trailingIcon = {
+                            IconButton(onClick = { showDatePicker = true }) {
+                                Icon(Icons.Default.CalendarMonth, contentDescription = "Pick date")
+                            }
+                        },
+                        placeholder = { Text("Tap to pick") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clickable { showDatePicker = true }
+                    )
+                }
 
                 if (mode == "EXPENSE" || mode == "INCOME") {
                     Text("Category", style = MaterialTheme.typography.labelMedium)
@@ -667,22 +687,46 @@ internal fun AddEntryDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                enabled = amount > 0 && (mode != "TRANSFER" || targetAccountId != null),
-                onClick = {
-                    when (mode) {
-                        "EXPENSE" -> viewModel.addCashExpense(amount, note.ifBlank { null }, category)
-                        "INCOME" -> viewModel.addCashIncome(amount, note.ifBlank { null }, category)
-                        "TRANSFER" -> viewModel.addManualTransfer(targetAccountId!!, amount, selectedCreditId)
-                    }
-                    onDismiss()
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    enabled = canSubmit,
+                    onClick = {
+                        val label = when (mode) {
+                            "EXPENSE" -> "Expense"
+                            "INCOME" -> "Income"
+                            else -> "Transfer"
+                        }
+                        val savedAmount = amount
+                        submitCurrentEntry()
+                        postedCount += 1
+                        lastPostedMessage = "$label Tk ${String.format(Locale.US, "%,.0f", savedAmount)} posted"
+                        amountText = ""
+                        note = ""
+                        selectedCreditId = null
+                    },
+                    modifier = Modifier.testTag("add_entry_continue_button")
+                ) {
+                    Text("Continue")
                 }
-            ) {
-                Text("Confirm")
+                Button(
+                    enabled = canSubmit,
+                    onClick = {
+                        submitCurrentEntry()
+                        onDismiss()
+                    },
+                    modifier = Modifier.testTag("add_entry_confirm_button")
+                ) {
+                    Text("Confirm")
+                }
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("add_entry_cancel_button")
+            ) {
+                Text(if (postedCount > 0) "Done" else "Cancel")
+            }
         }
     )
 
@@ -692,9 +736,14 @@ internal fun AddEntryDialog(
             confirmButton = {
                 TextButton(onClick = {
                     datePickerState.selectedDateMillis?.let { picked ->
+                        val utc = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                            timeInMillis = picked
+                        }
                         val original = Calendar.getInstance().apply { timeInMillis = occurredAt }
                         occurredAt = Calendar.getInstance().apply {
-                            timeInMillis = picked
+                            set(Calendar.YEAR, utc.get(Calendar.YEAR))
+                            set(Calendar.MONTH, utc.get(Calendar.MONTH))
+                            set(Calendar.DAY_OF_MONTH, utc.get(Calendar.DAY_OF_MONTH))
                             set(Calendar.HOUR_OF_DAY, original.get(Calendar.HOUR_OF_DAY))
                             set(Calendar.MINUTE, original.get(Calendar.MINUTE))
                             set(Calendar.SECOND, original.get(Calendar.SECOND))
@@ -971,26 +1020,41 @@ internal fun AccountCard(
         modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = accountIcon(account.kind),
+                    contentDescription = kindLabel,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = account.displayName,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                AssistChip(
-                    onClick = {},
-                    label = { Text(kindLabel, style = MaterialTheme.typography.labelSmall) },
-                    modifier = Modifier.padding(top = 4.dp)
+                Text(
+                    text = kindLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Text(

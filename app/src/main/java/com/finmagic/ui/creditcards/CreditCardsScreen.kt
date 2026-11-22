@@ -20,9 +20,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.CreditCard
-import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -36,29 +36,28 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.finmagic.data.local.entity.BillWithCard
 import com.finmagic.data.local.entity.CardPayment
-import com.finmagic.data.local.entity.CreditCard
 import com.finmagic.ui.components.BillCard
 import com.finmagic.ui.components.BillPaySheet
 import com.finmagic.ui.components.SectionHeader
 import com.finmagic.ui.components.SmsPermissionCard
-import com.finmagic.ui.components.SummaryCard
 import com.finmagic.ui.theme.StatusDueSoon
 import com.finmagic.ui.theme.StatusOverdue
 import com.finmagic.ui.theme.StatusSafe
 import com.finmagic.ui.theme.StatusUpcoming
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -127,7 +126,30 @@ fun CreditCardsScreen(
             {}
         }
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            SingleChoiceSegmentedButtonRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                SegmentedButton(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0; onTabSelected(0) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                    modifier = Modifier.testTag("cards_tab_bills")
+                ) { Text("Bills") }
+                SegmentedButton(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1; onTabSelected(1) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                    modifier = Modifier.testTag("cards_tab_my_cards")
+                ) { Text("My Cards") }
+            }
+
             PullToRefreshBox(
                 isRefreshing = state.isLoading,
                 onRefresh = {
@@ -137,12 +159,10 @@ fun CreditCardsScreen(
                         permissionLauncher.launch(Manifest.permission.READ_SMS)
                     }
                 },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
+                modifier = Modifier.fillMaxSize()
             ) {
                 LazyColumn(
-                    contentPadding = PaddingValues(bottom = 120.dp),
+                    contentPadding = PaddingValues(bottom = 32.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
@@ -404,7 +424,10 @@ fun CreditCardsScreen(
                                         fontWeight = FontWeight.SemiBold,
                                         modifier = Modifier.weight(1f)
                                     )
-                                    TextButton(onClick = { showAddCardDialog = true }) {
+                                    TextButton(
+                                        onClick = { showAddCardDialog = true },
+                                        modifier = Modifier.testTag("add_card_button")
+                                    ) {
                                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text("Add")
@@ -412,51 +435,35 @@ fun CreditCardsScreen(
                                 }
                             }
 
+                            item {
+                                CardPeriodSelector(
+                                    mode = state.periodMode,
+                                    selectedYear = state.selectedYear,
+                                    selectedMonth = state.selectedMonth,
+                                    canStepNext = state.canStepNext,
+                                    onModeSelected = { viewModel.setPeriodMode(it) },
+                                    onPrevious = { viewModel.stepPreviousPeriod() },
+                                    onNext = { viewModel.stepNextPeriod() },
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
+                            }
+
                             items(state.cards, key = { it.card.id }) { cardWithStats ->
                                 Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                                     CardItem(
                                         stats = cardWithStats,
+                                        periodLabel = formatCardPeriodLabel(
+                                            state.periodMode,
+                                            state.selectedYear,
+                                            state.selectedMonth
+                                        ),
                                         onClick = { onCardClick(cardWithStats.card.id) }
                                     )
                                 }
                             }
 
-                            item {
-                                Spacer(modifier = Modifier.height(24.dp))
-                                SupportedBanksInfo()
-                            }
                         }
                     }
-                }
-            }
-
-            // Floating Pill Tab
-            if (showPill) Surface(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 32.dp)
-                    .zIndex(1f),
-                shape = RoundedCornerShape(50.dp),
-                color = MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp),
-                tonalElevation = 6.dp,
-                shadowElevation = 8.dp
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    PillTabItem(
-                        selected = selectedTab == 0,
-                        icon = if (selectedTab == 0) Icons.Filled.Dashboard else Icons.Outlined.Dashboard,
-                        onClick = { selectedTab = 0; onTabSelected(0) }
-                    )
-
-                    PillTabItem(
-                        selected = selectedTab == 1,
-                        icon = if (selectedTab == 1) Icons.Filled.CreditCard else Icons.Outlined.CreditCard,
-                        onClick = { selectedTab = 1; onTabSelected(1) }
-                    )
                 }
             }
         }
@@ -549,26 +556,112 @@ fun PaymentReceivedRow(
     }
 }
 
+internal fun formatCardPeriodLabel(
+    mode: CardPeriodMode,
+    year: Int,
+    month: Int
+): String = when (mode) {
+    CardPeriodMode.ALL -> "All time"
+    CardPeriodMode.YEAR -> year.toString()
+    CardPeriodMode.MONTH -> {
+        val cal = Calendar.getInstance().apply {
+            clear()
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month)
+        }
+        SimpleDateFormat("MMM yyyy", Locale.US).format(cal.time)
+    }
+}
+
 @Composable
-private fun PillTabItem(
-    selected: Boolean,
-    icon: ImageVector,
-    onClick: () -> Unit
+internal fun CardPeriodSelector(
+    mode: CardPeriodMode,
+    selectedYear: Int,
+    selectedMonth: Int,
+    canStepNext: Boolean,
+    onModeSelected: (CardPeriodMode) -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier
-            .size(48.dp)
-            .background(
-                if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-                CircleShape
-            )
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilterChip(
+                selected = mode == CardPeriodMode.ALL,
+                onClick = { onModeSelected(CardPeriodMode.ALL) },
+                label = { Text("All") },
+                modifier = Modifier.testTag("cards_period_all")
+            )
+            FilterChip(
+                selected = mode == CardPeriodMode.MONTH,
+                onClick = { onModeSelected(CardPeriodMode.MONTH) },
+                label = { Text("Month") },
+                modifier = Modifier.testTag("cards_period_month")
+            )
+            FilterChip(
+                selected = mode == CardPeriodMode.YEAR,
+                onClick = { onModeSelected(CardPeriodMode.YEAR) },
+                label = { Text("Year") },
+                modifier = Modifier.testTag("cards_period_year")
+            )
+        }
+
+        if (mode != CardPeriodMode.ALL) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    IconButton(
+                        onClick = onPrevious,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("cards_period_prev")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                            contentDescription = "Previous period"
+                        )
+                    }
+                    Text(
+                        text = formatCardPeriodLabel(mode, selectedYear, selectedMonth),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    IconButton(
+                        onClick = onNext,
+                        enabled = canStepNext,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("cards_period_next")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "Next period",
+                            tint = if (canStepNext) {
+                                MaterialTheme.colorScheme.onSurface
+                            } else {
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                            }
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -601,6 +694,7 @@ private fun bankBrandGradient(bankName: String?): Brush {
 @Composable
 private fun CardItem(
     stats: CardWithStats,
+    periodLabel: String,
     onClick: () -> Unit
 ) {
     val card = stats.card
@@ -612,7 +706,7 @@ private fun CardItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(
@@ -638,7 +732,7 @@ private fun CardItem(
                         tint = Color.White
                     )
                 }
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = card.displayName,
@@ -655,77 +749,82 @@ private fun CardItem(
                     )
                 }
 
-                Column(horizontalAlignment = Alignment.End) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.75f)
+                ) {
                     Text(
-                        text = "Total Paid",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                    )
-                    Text(
-                        text = formatCurrencyMap(stats.paidByCurrency),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        textAlign = TextAlign.End
+                        text = "${stats.transactionCount} txns",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
             }
 
-            if (stats.totalUnpaid > 0 || utilization != null) {
-                Spacer(modifier = Modifier.height(12.dp))
+            if (utilization != null) {
+                Spacer(modifier = Modifier.height(10.dp))
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Unpaid",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                        )
-                        Text(
-                            text = formatCurrencyMap(stats.unpaidByCurrency),
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (stats.overdueBillCount > 0) StatusOverdue
-                            else if (stats.unpaidBillCount > 0) MaterialTheme.colorScheme.onSurface
-                            else StatusSafe
-                        )
-                    }
-
+                    LinearProgressIndicator(
+                        progress = { utilization.toFloat() },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp)),
+                        color = if (utilization > 0.8) StatusOverdue else MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = if (stats.unpaidBillCount > 0) {
-                            "${stats.unpaidBillCount} bill(s) • ${if (stats.overdueBillCount > 0) "${stats.overdueBillCount} overdue" else "unpaid"}"
-                        } else "All paid",
+                        text = "${card.limitSymbol()}${String.format(Locale.US, "%,.0f", card.creditLimit)} • ${(utilization * 100).toInt()}%",
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (stats.overdueBillCount > 0) StatusOverdue else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = "Outstanding ${formatCurrencyMap(stats.unpaidByCurrency)} • Spent ৳${String.format(Locale.US, "%,.2f", stats.spentAmount)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = if (stats.overdueBillCount > 0) StatusOverdue
+                        else if (stats.totalUnpaid > 0) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "Bills ${formatCurrencyMap(stats.billedByCurrency)} • Paid ${formatCurrencyMap(stats.paidByCurrency)} ($periodLabel)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
-                if (utilization != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        LinearProgressIndicator(
-                            progress = { utilization.toFloat() },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(3.dp)),
-                            color = if (utilization > 0.8) StatusOverdue else MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "${card.limitSymbol()}${String.format(Locale.US, "%,.0f", card.creditLimit)} limit • ${(utilization * 100).toInt()}% used",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (stats.unpaidBillCount > 0) {
+                        "${stats.unpaidBillCount} unpaid"
+                    } else {
+                        "All paid"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (stats.overdueBillCount > 0) StatusOverdue
+                    else if (stats.unpaidBillCount > 0) MaterialTheme.colorScheme.primary
+                    else StatusSafe
+                )
             }
         }
     }
@@ -1113,26 +1212,6 @@ private fun CreditCardTeachingCard(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            HorizontalDivider()
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "Supported Banks",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "Prime Bank  •  Pubali Bank  •  City Bank (Amex)\nBRAC Bank  •  Eastern Bank",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                lineHeight = 18.sp
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
             Text(
                 text = "Grant SMS permission and bills will appear automatically.",
                 style = MaterialTheme.typography.bodySmall,
@@ -1178,31 +1257,6 @@ private fun TeachingStep(
                 lineHeight = 18.sp
             )
         }
-    }
-}
-
-@Composable
-private fun SupportedBanksInfo() {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = "Supported Banks",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = "Prime Bank • Pubali Bank • City Bank (Amex)\nBRAC Bank • EBL • Eastern Bank",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            lineHeight = 18.sp
-        )
     }
 }
 

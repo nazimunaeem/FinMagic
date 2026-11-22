@@ -14,11 +14,13 @@ import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -26,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.finmagic.data.local.entity.CardPayment
+import com.finmagic.data.local.entity.CardTransaction
 import com.finmagic.data.local.entity.CreditCard
 import com.finmagic.ui.components.BillCard
 import com.finmagic.ui.components.SectionHeader
@@ -42,14 +45,21 @@ fun CardDetailScreen(
 ) {
     val card by viewModel.card.collectAsStateWithLifecycle()
     val bills by viewModel.bills.collectAsStateWithLifecycle()
+    val billedTotals by viewModel.billedTotals.collectAsStateWithLifecycle()
     val paidTotals by viewModel.paidTotals.collectAsStateWithLifecycle()
     val unpaidTotals by viewModel.unpaidTotals.collectAsStateWithLifecycle()
     val payments by viewModel.payments.collectAsStateWithLifecycle()
+    val cardTransactions by viewModel.cardTransactions.collectAsStateWithLifecycle()
+    val spentInPeriod by viewModel.spentInPeriod.collectAsStateWithLifecycle()
+    val periodMode by viewModel.periodMode.collectAsStateWithLifecycle()
+    val selectedYear by viewModel.selectedYear.collectAsStateWithLifecycle()
+    val selectedMonth by viewModel.selectedMonth.collectAsStateWithLifecycle()
+    val canStepNext by viewModel.canStepNext.collectAsStateWithLifecycle()
 
     var showEditDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
-    val unpaidBills = remember(bills) { bills.filter { !it.isPaid } }
+    val unpaidBills = remember(bills) { bills.filter { !it.isPaid && !it.isSuperseded } }
     val paidBills = remember(bills) { bills.filter { it.isPaid } }
 
     Scaffold(
@@ -74,12 +84,18 @@ fun CardDetailScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.testTag("card_detail_back")
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showEditDialog = true }) {
+                    IconButton(
+                        onClick = { showEditDialog = true },
+                        modifier = Modifier.testTag("card_detail_edit")
+                    ) {
                         Icon(Icons.Filled.Edit, contentDescription = "Edit Card")
                     }
                 },
@@ -98,10 +114,45 @@ fun CardDetailScreen(
             item {
                 CardSummaryHeader(
                     card = card,
+                    billedTotals = billedTotals,
                     paidTotals = paidTotals,
                     unpaidTotals = unpaidTotals,
-                    totalBills = bills.size
+                    spentAmount = spentInPeriod,
+                    transactionCount = cardTransactions.size,
+                    totalBills = bills.count { !it.isSuperseded },
+                    periodLabel = formatCardPeriodLabel(periodMode, selectedYear, selectedMonth)
                 )
+            }
+
+            // Period Selector (All / Month / Year)
+            item {
+                CardPeriodSelector(
+                    mode = periodMode,
+                    selectedYear = selectedYear,
+                    selectedMonth = selectedMonth,
+                    canStepNext = canStepNext,
+                    onModeSelected = { viewModel.setPeriodMode(it) },
+                    onPrevious = { viewModel.stepPreviousPeriod() },
+                    onNext = { viewModel.stepNextPeriod() },
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
+
+            // Card Transactions (POS / Spend entries)
+            if (cardTransactions.isNotEmpty()) {
+                item {
+                    SectionHeader(
+                        title = "CARD TRANSACTIONS",
+                        count = cardTransactions.size,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                items(cardTransactions, key = { "card_tx_${it.id}" }) { tx ->
+                    CardTransactionRow(
+                        txn = tx,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
             }
 
             // Unpaid Active Bills
@@ -167,7 +218,7 @@ fun CardDetailScreen(
                 }
             }
 
-            if (bills.isEmpty() && payments.isEmpty()) {
+            if (bills.isEmpty() && payments.isEmpty() && cardTransactions.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier
@@ -177,16 +228,17 @@ fun CardDetailScreen(
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
-                                text = "No bill history found",
+                                text = "No activity found",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Bills and payments for this card will appear here automatically",
+                                text = "Transactions, bills, and payments for this card will appear here automatically",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 24.dp)
                             )
                         }
                     }
@@ -255,9 +307,13 @@ private fun formatCurrencies(totals: Map<String, Double>): String {
 @Composable
 private fun CardSummaryHeader(
     card: CreditCard?,
+    billedTotals: Map<String, Double>,
     paidTotals: Map<String, Double>,
     unpaidTotals: Map<String, Double>,
-    totalBills: Int
+    spentAmount: Double,
+    transactionCount: Int,
+    totalBills: Int,
+    periodLabel: String
 ) {
     val totalUnpaid = unpaidTotals.values.sum()
     val utilization = if (card != null && card.creditLimit > 0) {
@@ -279,66 +335,31 @@ private fun CardSummaryHeader(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Total Paid",
+                        text = "Outstanding",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                     )
                     Text(
-                        text = formatCurrencies(paidTotals),
-                        style = if (formatCurrencies(paidTotals).length > 14) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CreditCard,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "Active Unpaid",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                    )
-                    Text(
                         text = formatCurrencies(unpaidTotals),
-                        style = MaterialTheme.typography.titleMedium,
+                        style = if (formatCurrencies(unpaidTotals).length > 14) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                         color = if (totalUnpaid > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
 
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "Total Statements",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                    )
-                    Text(
-                        text = "$totalBills bills",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)
+                    ) {
+                        Text(
+                            text = "$transactionCount txns",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
                 }
             }
 
@@ -395,6 +416,100 @@ private fun CardSummaryHeader(
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = "Outstanding ${formatCurrencies(unpaidTotals)} • Spent ৳${String.format(Locale.US, "%,.2f", spentAmount)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = "Bills ${formatCurrencies(billedTotals)} • Paid ${formatCurrencies(paidTotals)} ($periodLabel)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "$totalBills bills",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CardTransactionRow(
+    txn: CardTransaction,
+    modifier: Modifier = Modifier
+) {
+    val dateStr = remember(txn.occurredAt) {
+        SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date(txn.occurredAt))
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ReceiptLong,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = txn.merchant,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = if (!txn.category.isNullOrBlank()) "$dateStr • ${txn.category}" else dateStr,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "৳${String.format(Locale.US, "%,.2f", txn.amount)}",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
     }
 }

@@ -46,13 +46,7 @@ class MyAccountsViewModel @Inject constructor(
 
     fun adjustBalance(targetBalance: Double, accountId: Long) {
         viewModelScope.launch {
-            val account = accountRepository.getAccountOnce(accountId) ?: return@launch
-            if (account.kind == com.finmagic.data.local.entity.Account.KIND_CASH) {
-                accountRepository.adjustCashBalance(targetBalance)
-            } else {
-                // For non-cash, typically we just set it directly or add adjustment
-                accountRepository.setCashBalanceDirect(targetBalance, accountId)
-            }
+            accountRepository.adjustCashBalance(targetBalance, accountId)
         }
     }
 

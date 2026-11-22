@@ -614,23 +614,30 @@ class AccountRepository @Inject constructor(
         return true
     }
 
-    /** Adjusts the balance of the given account (or Cash if null) to the target amount. */
+    /** Adjusts the balance of the given account (or Cash if null) to the target amount,
+     *  recording an adjustment entry for the difference from the current displayed balance. */
     suspend fun adjustCashBalance(targetBalance: Double, accountId: Long? = null): Boolean {
         val targetId = accountId ?: ensureCashAccount().id
         database.withTransaction {
-            val txns = txnDao.getByAccountOnce(targetId)
-            val diff = calculateAdjustmentDelta(targetBalance, txns)
+            val account = accountDao.findByIdOnce(targetId)
+            val isNonCash = account != null && account.kind != Account.KIND_CASH
+            val allTxns = txnDao.getAllByAccountOnce(targetId)
+            val latestBal = if (isNonCash) txnDao.getLatestBalanceOnce(targetId) else null
+            val currentBalance = latestBal ?: effectiveBalance(allTxns)
+            val diff = targetBalance - currentBalance
             if (kotlin.math.abs(diff) >= 0.01) {
                 val direction = if (diff > 0) AccountTransaction.DIRECTION_IN else AccountTransaction.DIRECTION_OUT
                 val amount = kotlin.math.abs(diff)
+                val label = if (isNonCash) "Balance Adjustment" else "Cash Balance Adjustment"
                 txnDao.insert(
                     AccountTransaction(
                         accountId = targetId,
                         direction = direction,
                         amount = amount,
+                        balanceAfter = if (isNonCash) targetBalance else null,
                         occurredAt = System.currentTimeMillis(),
                         category = com.finmagic.data.sms.parsers.TxnCategory.ADJUSTMENT,
-                        counterparty = "Cash Balance Adjustment",
+                        counterparty = label,
                         isManual = true
                     )
                 )
@@ -641,8 +648,8 @@ class AccountRepository @Inject constructor(
 
     // ---------------------------------------------------------------- queries
 
-    fun observeSummaries(monthStart: Long): Flow<List<com.finmagic.data.local.entity.AccountSummary>> =
-        kotlinx.coroutines.flow.combine(accountDao.observeAll(), txnDao.observeSummariesRaw(monthStart)) { accounts, rows ->
+    fun observeSummaries(monthStart: Long, monthEnd: Long = Long.MAX_VALUE): Flow<List<com.finmagic.data.local.entity.AccountSummary>> =
+        kotlinx.coroutines.flow.combine(accountDao.observeAll(), txnDao.observeSummariesRaw(monthStart, monthEnd)) { accounts, rows ->
             val byId = rows.associateBy { it.accountId }
             accounts.mapNotNull { account ->
                 byId[account.id]?.let { row ->
@@ -668,12 +675,12 @@ class AccountRepository @Inject constructor(
         txnDao.observeAllWithAccount()
 
     /** Monthly expense totals per category across all accounts (plan Phase 5). */
-    fun observeMonthlyExpenseByCategory(monthStart: Long): Flow<List<com.finmagic.data.local.dao.CategoryTotal>> =
-        txnDao.observeMonthlyExpenseByCategory(monthStart)
+    fun observeMonthlyExpenseByCategory(monthStart: Long, monthEnd: Long = Long.MAX_VALUE): Flow<List<com.finmagic.data.local.dao.CategoryTotal>> =
+        txnDao.observeMonthlyExpenseByCategory(monthStart, monthEnd)
 
     /** Monthly income totals per category across all accounts. */
-    fun observeMonthlyIncomeByCategory(monthStart: Long): Flow<List<com.finmagic.data.local.dao.CategoryTotal>> =
-        txnDao.observeMonthlyIncomeByCategory(monthStart)
+    fun observeMonthlyIncomeByCategory(monthStart: Long, monthEnd: Long = Long.MAX_VALUE): Flow<List<com.finmagic.data.local.dao.CategoryTotal>> =
+        txnDao.observeMonthlyIncomeByCategory(monthStart, monthEnd)
 
     /** Soft-deleted (archived) accounts that can still be restored by the user. */
     fun observeArchived(): Flow<List<Account>> = accountDao.observeArchived()
@@ -751,6 +758,8 @@ class AccountRepository @Inject constructor(
     suspend fun setCashBalanceDirect(targetBalance: Double, accountId: Long? = null): Boolean {
         val targetId = accountId ?: ensureCashAccount().id
         database.withTransaction {
+            val account = accountDao.findByIdOnce(targetId)
+            val isNonCash = account != null && account.kind != Account.KIND_CASH
             // Remove old direct-set entries
             txnDao.deleteDirectSetEntries(targetId)
             // Compute natural balance (without the direct-set)
@@ -763,6 +772,7 @@ class AccountRepository @Inject constructor(
                     accountId = targetId,
                     direction = direction,
                     amount = kotlin.math.abs(diff),
+                    balanceAfter = if (isNonCash) targetBalance else null,
                     occurredAt = System.currentTimeMillis(),
                     category = "DirectSet",
                     counterparty = "Balance Set",

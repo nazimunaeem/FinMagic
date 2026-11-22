@@ -104,9 +104,14 @@ class AccountDetailViewModel @Inject constructor(
         }
     }
 
-    fun addTransfer(otherAccountId: Long, fromCash: Boolean, amount: Double) {
+    fun addTransfer(
+        otherAccountId: Long,
+        fromCash: Boolean,
+        amount: Double,
+        occurredAt: Long = System.currentTimeMillis()
+    ) {
         viewModelScope.launch {
-            accountRepository.addManualTransfer(otherAccountId, fromCash, amount, System.currentTimeMillis())
+            accountRepository.addManualTransfer(otherAccountId, fromCash, amount, occurredAt)
             refreshBalance()
         }
     }

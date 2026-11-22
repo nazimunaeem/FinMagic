@@ -76,7 +76,7 @@ class ExpensesViewModel @Inject constructor(
     fun stepNext() {
         val now = Calendar.getInstance()
         val (y, m) = with(_uiState.value) {
-            if (month == 12) year + 1 to 1 else year to month - 1
+            if (month == 12) year + 1 to 1 else year to month + 1
         }
         if (y > now.get(Calendar.YEAR) || (y == now.get(Calendar.YEAR) && m > now.get(Calendar.MONTH) + 1)) return
         setMonth(y, m)

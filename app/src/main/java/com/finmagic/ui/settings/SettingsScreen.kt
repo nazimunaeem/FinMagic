@@ -150,28 +150,6 @@ fun SettingsScreen(
                 }
             }
 
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = false,
-                        onClick = onNavigateToCategories,
-                        label = { Text("Categories") }
-                    )
-                    FilterChip(
-                        selected = false,
-                        onClick = onNavigateToSmsReview,
-                        label = { Text("SMS Review") }
-                    )
-                }
-            }
-
             // Group 1: Permissions & Scanning
             SettingsGroup(title = "Permissions & Scanning") {
                 SettingsItem(

@@ -169,11 +169,11 @@ interface AccountTransactionDao {
                   ), 0) AS computedBalance,
                COALESCE((SELECT SUM(CASE WHEN direction = 'IN' THEN amount ELSE 0 END)
                 FROM account_transactions t
-                WHERE t.accountId = a.id AND t.occurredAt >= :monthStart
+                WHERE t.accountId = a.id AND t.occurredAt >= :monthStart AND t.occurredAt < :monthEnd
                   AND t.transferId IS NULL AND t.category != 'DirectSet'), 0) AS monthIn,
                COALESCE((SELECT SUM(CASE WHEN direction = 'OUT' THEN amount ELSE 0 END)
                 FROM account_transactions t
-                WHERE t.accountId = a.id AND t.occurredAt >= :monthStart
+                WHERE t.accountId = a.id AND t.occurredAt >= :monthStart AND t.occurredAt < :monthEnd
                   AND t.transferId IS NULL AND t.category != 'DirectSet'), 0) AS monthOut,
                COALESCE((SELECT MAX(occurredAt) FROM account_transactions t
                 WHERE t.accountId = a.id AND t.category != 'DirectSet'), 0) AS lastActivity
@@ -181,7 +181,7 @@ interface AccountTransactionDao {
         WHERE a.isArchived = 0
         ORDER BY lastActivity DESC, a.name
     """)
-    fun observeSummariesRaw(monthStart: Long): Flow<List<AccountSummaryRow>>
+    fun observeSummariesRaw(monthStart: Long, monthEnd: Long): Flow<List<AccountSummaryRow>>
 
     /** Monthly outflow per category; internal transfers excluded (plan Phase 5). */
     @Query("""
@@ -193,6 +193,7 @@ interface AccountTransactionDao {
             SUM(amount) AS total
         FROM account_transactions
         WHERE occurredAt >= :monthStart
+          AND occurredAt < :monthEnd
           AND direction = 'OUT'
           AND transferId IS NULL
           AND category != 'DirectSet'
@@ -203,7 +204,7 @@ interface AccountTransactionDao {
             END
         ORDER BY total DESC
     """)
-    fun observeMonthlyExpenseByCategory(monthStart: Long): Flow<List<CategoryTotal>>
+    fun observeMonthlyExpenseByCategory(monthStart: Long, monthEnd: Long): Flow<List<CategoryTotal>>
 
     /** Monthly inflow per category (salary, received, credit); transfers excluded. */
     @Query("""
@@ -215,6 +216,7 @@ interface AccountTransactionDao {
             SUM(amount) AS total
         FROM account_transactions
         WHERE occurredAt >= :monthStart
+          AND occurredAt < :monthEnd
           AND direction = 'IN'
           AND transferId IS NULL
           AND category != 'DirectSet'
@@ -226,7 +228,7 @@ interface AccountTransactionDao {
             END
         ORDER BY total DESC
     """)
-    fun observeMonthlyIncomeByCategory(monthStart: Long): Flow<List<CategoryTotal>>
+    fun observeMonthlyIncomeByCategory(monthStart: Long, monthEnd: Long): Flow<List<CategoryTotal>>
 }
 
 /** Raw projection joined onto [com.finmagic.data.local.entity.Account] in the repository. */

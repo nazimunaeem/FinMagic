@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -50,7 +51,6 @@ import com.finmagic.ui.settings.CategoriesScreen
 import com.finmagic.ui.navigation.bottomNavScreens
 import com.finmagic.ui.settings.SettingsScreen
 import com.finmagic.ui.smsreview.SmsReviewScreen
-import com.finmagic.ui.stats.StatsScreen
 import com.finmagic.ui.theme.FinMagicTheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -134,7 +134,10 @@ fun MainApp() {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface,
+                tonalElevation = 2.dp
+            ) {
                 bottomNavScreens.forEach { screen ->
                     val selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true
                     NavigationBarItem(
@@ -150,7 +153,6 @@ fun MainApp() {
                             val inSection = currentDestination?.hierarchy
                                 ?.any { it.route == screen.route } == true
                             if (!inSection) {
-                                // Switching to a different section: reset to default sub-tab.
                                 if (screen.route == Screen.Accounts.route) accountsInitialTab = 0
                                 if (screen.route == Screen.CreditCards.route) cardsInitialTab = 0
                                 navController.navigate(screen.route) {
@@ -158,7 +160,6 @@ fun MainApp() {
                                     launchSingleTop = true
                                 }
                             } else {
-                                // Already inside this section: pop back to its root.
                                 navController.popBackStack(screen.route, inclusive = false)
                             }
                         }
@@ -175,9 +176,6 @@ fun MainApp() {
             composable(Screen.Home.route) {
                 HomeScreen(
                     onAccountClick = { accountId ->
-                        navController.navigate(Screen.Accounts.route) {
-                            launchSingleTop = true
-                        }
                         navController.navigate("accounts/$accountId")
                     },
                     onCardClick = { cardId ->
@@ -197,9 +195,6 @@ fun MainApp() {
             }
             composable(Screen.Expenses.route) {
                 ExpensesScreen()
-            }
-            composable(Screen.Stats.route) {
-                StatsScreen()
             }
             composable(
                 route = "cards/{cardId}",

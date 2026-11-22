@@ -57,16 +57,19 @@ class AccountsViewModel @Inject constructor(
     val selectedYear: StateFlow<Int> = _selectedYear.asStateFlow()
     val selectedMonth: StateFlow<Int> = _selectedMonth.asStateFlow()
 
-    /** Millis at the start of the currently selected month (0-based month, always Jan 1 = day 1). */
-    private val monthStart: Flow<Long> =
-        combine(_selectedYear, _selectedMonth) { year, month -> startOfMonthMillis(year, month) }
+    private val monthRange: Flow<Pair<Long, Long>> =
+        combine(_selectedYear, _selectedMonth) { year, month ->
+            val start = startOfMonthMillis(year, month)
+            val end = endOfMonthMillis(year, month)
+            start to end
+        }
 
     val uiState: StateFlow<AccountsUiState> =
-        monthStart.flatMapLatest { ms ->
+        monthRange.flatMapLatest { (ms, me) ->
             combine(
-                accountRepository.observeSummaries(ms),
-                accountRepository.observeMonthlyExpenseByCategory(ms),
-                accountRepository.observeMonthlyIncomeByCategory(ms),
+                accountRepository.observeSummaries(ms, me),
+                accountRepository.observeMonthlyExpenseByCategory(ms, me),
+                accountRepository.observeMonthlyIncomeByCategory(ms, me),
                 accountRepository.observeArchived(),
                 accountRepository.observeAllTransactionsWithAccount()
             ) { summaries, expenses, income, archived, transactions ->
@@ -106,6 +109,30 @@ class AccountsViewModel @Inject constructor(
         _selectedMonth.value = month
     }
 
+    fun stepPreviousMonth() {
+        var m = _selectedMonth.value - 1
+        var y = _selectedYear.value
+        if (m < 0) {
+            m = 11
+            y -= 1
+        }
+        setSelectedMonth(y, m)
+    }
+
+    fun stepNextMonth() {
+        val cur = Calendar.getInstance()
+        val curY = cur.get(Calendar.YEAR)
+        val curM = cur.get(Calendar.MONTH)
+        var m = _selectedMonth.value + 1
+        var y = _selectedYear.value
+        if (m > 11) {
+            m = 0
+            y += 1
+        }
+        if (y > curY || (y == curY && m > curM)) return
+        setSelectedMonth(y, m)
+    }
+
     fun restoreAccount(accountId: Long) {
         viewModelScope.launch { accountRepository.restoreAccount(accountId) }
     }
@@ -122,7 +149,12 @@ class AccountsViewModel @Inject constructor(
         return accountRepository.findPotentialCreditItems(accountId, amount)
     }
 
-    fun addManualTransfer(targetAccountId: Long, amount: Double, existingCreditId: Long?) {
+    fun addManualTransfer(
+        targetAccountId: Long,
+        amount: Double,
+        existingCreditId: Long?,
+        occurredAt: Long = System.currentTimeMillis()
+    ) {
         viewModelScope.launch {
             if (existingCreditId != null) {
                 accountRepository.linkCashToExistingCredit(existingCreditId, amount)
@@ -131,32 +163,42 @@ class AccountsViewModel @Inject constructor(
                     otherAccountId = targetAccountId,
                     fromCash = true,
                     amount = amount,
-                    occurredAt = System.currentTimeMillis()
+                    occurredAt = occurredAt
                 )
             }
         }
     }
 
-    fun addCashExpense(amount: Double, note: String?, category: String? = null) {
+    fun addCashExpense(
+        amount: Double,
+        note: String?,
+        category: String? = null,
+        occurredAt: Long = System.currentTimeMillis()
+    ) {
         viewModelScope.launch {
             accountRepository.addManualCashEntry(
                 direction = AccountTransaction.DIRECTION_OUT,
                 amount = amount,
                 category = category?.ifBlank { null } ?: "Manual",
                 counterparty = note,
-                occurredAt = System.currentTimeMillis()
+                occurredAt = occurredAt
             )
         }
     }
 
-    fun addCashIncome(amount: Double, note: String?, category: String? = null) {
+    fun addCashIncome(
+        amount: Double,
+        note: String?,
+        category: String? = null,
+        occurredAt: Long = System.currentTimeMillis()
+    ) {
         viewModelScope.launch {
             accountRepository.addManualCashEntry(
                 direction = AccountTransaction.DIRECTION_IN,
                 amount = amount,
                 category = category?.ifBlank { null } ?: "Manual",
                 counterparty = note,
-                occurredAt = System.currentTimeMillis()
+                occurredAt = occurredAt
             )
         }
     }
@@ -204,5 +246,17 @@ class AccountsViewModel @Inject constructor(
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+    private fun endOfMonthMillis(year: Int, month: Int): Long =
+        Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month)
+            set(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            add(Calendar.MONTH, 1)
         }.timeInMillis
 }
