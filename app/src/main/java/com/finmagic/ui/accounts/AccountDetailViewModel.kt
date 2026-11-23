@@ -81,12 +81,11 @@ class AccountDetailViewModel @Inject constructor(
 
     private suspend fun refreshBalance() {
         val acct = _account.value ?: return
-        val latest = accountRepository.latestBalance(accountId)
-        if (acct.kind != Account.KIND_CASH && latest != null) {
-            _balance.value = latest
+        val txns = accountRepository.getAllTransactionsOnce(accountId)
+        _balance.value = if (acct.kind == Account.KIND_CASH) {
+            AccountRepository.effectiveBalance(txns)
         } else {
-            val txns = accountRepository.getAllTransactionsOnce(accountId)
-            _balance.value = AccountRepository.effectiveBalance(txns)
+            AccountRepository.computeAccountBalance(txns)
         }
     }
 

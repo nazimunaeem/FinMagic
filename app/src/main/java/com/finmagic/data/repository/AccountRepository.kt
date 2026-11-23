@@ -46,7 +46,58 @@ class AccountRepository @Inject constructor(
 
         fun calculateAdjustmentDelta(targetBalance: Double, txns: List<AccountTransaction>): Double =
             targetBalance - ledgerBalance(txns)
+
+        /** Per-transaction account balance before and after each transaction in chronological order. */
+        fun computeBalanceTrails(txns: List<AccountTransaction>): Map<Long, BalanceTrail> {
+            if (txns.isEmpty()) return emptyMap()
+            val sorted = txns.sortedWith(compareBy({ it.occurredAt }, { it.id }))
+            val result = LinkedHashMap<Long, BalanceTrail>(sorted.size)
+            val firstKnownIdx = sorted.indexOfFirst { it.balanceAfter != null }
+            if (firstKnownIdx == -1) {
+                var running = 0.0
+                for (txn in sorted) {
+                    val delta = if (txn.direction == AccountTransaction.DIRECTION_IN) txn.amount else -txn.amount
+                    val before = running
+                    val after = running + delta
+                    result[txn.id] = BalanceTrail(before = before, after = after)
+                    running = after
+                }
+            } else {
+                var cursorAfter = sorted[firstKnownIdx].balanceAfter!!
+                for (i in firstKnownIdx downTo 0) {
+                    val txn = sorted[i]
+                    val delta = if (txn.direction == AccountTransaction.DIRECTION_IN) txn.amount else -txn.amount
+                    val after = txn.balanceAfter ?: cursorAfter
+                    val before = after - delta
+                    result[txn.id] = BalanceTrail(before = before, after = after)
+                    cursorAfter = before
+                }
+                var running = sorted[firstKnownIdx].balanceAfter!!
+                for (i in (firstKnownIdx + 1) until sorted.size) {
+                    val txn = sorted[i]
+                    val delta = if (txn.direction == AccountTransaction.DIRECTION_IN) txn.amount else -txn.amount
+                    val after = txn.balanceAfter ?: (running + delta)
+                    val before = if (txn.balanceAfter != null) after - delta else running
+                    result[txn.id] = BalanceTrail(before = before, after = after)
+                    running = after
+                }
+            }
+            return result
+        }
+
+        /** Current account balance computed chronologically across balanceAfter anchors and subsequent transactions. */
+        fun computeAccountBalance(txns: List<AccountTransaction>): Double {
+            if (txns.isEmpty()) return 0.0
+            val sorted = txns.sortedWith(compareBy({ it.occurredAt }, { it.id }))
+            val trails = computeBalanceTrails(sorted)
+            return trails[sorted.last().id]?.after ?: effectiveBalance(sorted)
+        }
     }
+
+    data class BalanceTrail(
+        val before: Double,
+        val after: Double
+    )
 
     // ---------------------------------------------------------------- accounts
 
@@ -740,8 +791,7 @@ class AccountRepository @Inject constructor(
             val account = accountDao.findByIdOnce(targetId)
             val isNonCash = account != null && account.kind != Account.KIND_CASH
             val allTxns = txnDao.getAllByAccountOnce(targetId)
-            val latestBal = if (isNonCash) txnDao.getLatestBalanceOnce(targetId) else null
-            val currentBalance = latestBal ?: effectiveBalance(allTxns)
+            val currentBalance = if (isNonCash) computeAccountBalance(allTxns) else effectiveBalance(allTxns)
             val diff = targetBalance - currentBalance
             if (kotlin.math.abs(diff) >= 0.01) {
                 val direction = if (diff > 0) AccountTransaction.DIRECTION_IN else AccountTransaction.DIRECTION_OUT
@@ -767,17 +817,29 @@ class AccountRepository @Inject constructor(
     // ---------------------------------------------------------------- queries
 
     fun observeSummaries(monthStart: Long, monthEnd: Long = Long.MAX_VALUE): Flow<List<com.finmagic.data.local.entity.AccountSummary>> =
-        kotlinx.coroutines.flow.combine(accountDao.observeAll(), txnDao.observeSummariesRaw(monthStart, monthEnd)) { accounts, rows ->
+        kotlinx.coroutines.flow.combine(
+            accountDao.observeAll(),
+            txnDao.observeSummariesRaw(monthStart, monthEnd),
+            txnDao.observeAllIncludingDirectSet()
+        ) { accounts, rows, allTxns ->
             val byId = rows.associateBy { it.accountId }
+            val txnsByAccount = allTxns.groupBy { it.accountId }
             accounts.mapNotNull { account ->
                 byId[account.id]?.let { row ->
+                    val acctTxns = txnsByAccount[account.id].orEmpty()
+                    val currentBal = if (account.kind == Account.KIND_CASH) {
+                        row.computedBalance
+                    } else {
+                        computeAccountBalance(acctTxns)
+                    }
                     com.finmagic.data.local.entity.AccountSummary(
                         account = account,
                         latestBalance = row.latestBalance,
                         computedBalance = row.computedBalance,
                         monthIn = row.monthIn,
                         monthOut = row.monthOut,
-                        lastActivity = row.lastActivity
+                        lastActivity = row.lastActivity,
+                        currentBalance = currentBal
                     )
                 }
             }
@@ -788,6 +850,9 @@ class AccountRepository @Inject constructor(
 
     fun observeAllTransactions(): Flow<List<AccountTransaction>> =
         txnDao.observeAll()
+
+    fun observeAllTransactionsIncludingDirectSet(): Flow<List<AccountTransaction>> =
+        txnDao.observeAllIncludingDirectSet()
 
     fun observeAllTransactionsWithAccount(): Flow<List<com.finmagic.data.local.dao.AccountTransactionWithAccount>> =
         txnDao.observeAllWithAccount()

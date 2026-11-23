@@ -124,6 +124,7 @@ fun AccountsScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = if (showTopBar) {
             {
                 TopAppBar(
@@ -244,26 +245,35 @@ fun AccountsScreen(
                             Account.TYPE_DEPOSIT.lowercase(),
                             Account.TYPE_LOAN.lowercase()
                         )
-                        val typeConfigMap = state.allAccountTypes.associateBy { it.name.lowercase() }
+                        val typeConfigMap = state.allAccountTypes.associateBy { it.name.trim().lowercase() }
                         val grouped = state.summaries
-                            .groupBy { it.account.effectiveType }
+                            .groupBy { it.account.effectiveType.trim().lowercase() }
                             .entries
                             .sortedWith(compareBy<Map.Entry<String, List<AccountSummary>>> {
-                                val idx = defaultTypeOrder.indexOf(it.key.lowercase())
+                                val idx = defaultTypeOrder.indexOf(it.key)
                                 if (idx >= 0) idx else 100
-                            }.thenBy { it.key.lowercase() })
+                            }.thenBy { it.key })
 
-                        grouped.forEach { (typeName, groupSummaries) ->
-                            val isTypeLiability = (typeConfigMap[typeName.lowercase()]?.isLiability == true) ||
-                                groupSummaries.any { it.account.isLiability }
-                            val typeTotal = groupSummaries.sumOf {
-                                if (it.account.isLiability) kotlin.math.abs(it.displayBalance) else it.displayBalance
+                        grouped.forEach { (typeKey, groupSummaries) ->
+                            val typeName = typeConfigMap[typeKey]?.name
+                                ?: groupSummaries.first().account.effectiveType
+                            val isTypeLiability = typeConfigMap[typeKey]?.isLiability
+                                ?: groupSummaries.all { it.account.isLiability }
+                            val includedSummaries = groupSummaries.filter { it.account.includeInTotal }
+                            val excludedCount = groupSummaries.size - includedSummaries.size
+                            val typeTotal = if (isTypeLiability) {
+                                includedSummaries.sumOf { kotlin.math.abs(it.displayBalance) }
+                            } else {
+                                includedSummaries.sumOf {
+                                    if (it.account.isLiability) -kotlin.math.abs(it.displayBalance) else it.displayBalance
+                                }
                             }
-                            item(key = "type_header_$typeName") {
+                            item(key = "type_header_$typeKey") {
                                 AccountTypeGroupHeader(
                                     typeName = typeName,
                                     typeTotal = typeTotal,
                                     count = groupSummaries.size,
+                                    excludedCount = excludedCount,
                                     isLiability = isTypeLiability
                                 )
                             }
@@ -404,6 +414,7 @@ fun AccountsScreen(
                                 Box(modifier = Modifier.padding(horizontal = 12.dp)) {
                                     TxnRow(
                                         txn = txn,
+                                        balanceTrail = state.balanceTrails[txn.id],
                                         accountName = txnWithAcct.accountName,
                                         categoryNicknames = categoryNicknames,
                                         onTap = { detailTxn = txnWithAcct },
@@ -920,13 +931,13 @@ internal fun TotalBalanceHeader(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = String.format(Locale.US, "Assets: Tk %,.0f", assetsTotal),
+                        text = "Assets: ${formatTkAmount(assetsTotal)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = StatusSafe,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = String.format(Locale.US, "Liabilities: −Tk %,.0f", liabilitiesTotal),
+                        text = "Liabilities: −${formatTkAmount(liabilitiesTotal)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error,
                         fontWeight = FontWeight.SemiBold
@@ -1138,13 +1149,26 @@ fun accountIcon(kind: String): ImageVector = when (kind) {
     else -> Icons.Filled.Payments
 }
 
+internal fun formatTkAmount(amount: Double): String {
+    val absVal = kotlin.math.abs(amount)
+    val hasCents = kotlin.math.abs(absVal - kotlin.math.round(absVal)) >= 0.005
+    return if (hasCents) {
+        String.format(Locale.US, "Tk %,.2f", absVal)
+    } else {
+        String.format(Locale.US, "Tk %,.0f", absVal)
+    }
+}
+
 @Composable
 private fun AccountTypeGroupHeader(
     typeName: String,
     typeTotal: Double,
     count: Int,
+    excludedCount: Int = 0,
     isLiability: Boolean
 ) {
+    val countText = if (excludedCount > 0) "$count · $excludedCount excl." else "$count"
+    val isNegativeDisplay = if (isLiability) typeTotal > 0.005 else typeTotal < -0.005
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1158,7 +1182,7 @@ private fun AccountTypeGroupHeader(
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
-                text = "${typeName.uppercase()} ($count)",
+                text = "${typeName.uppercase()} ($countText)",
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 color = if (isLiability) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
@@ -1179,10 +1203,10 @@ private fun AccountTypeGroupHeader(
             }
         }
         Text(
-            text = (if (isLiability && typeTotal > 0) "−" else "") + String.format(Locale.US, "Tk %,.0f", typeTotal),
+            text = (if (isNegativeDisplay) "−" else "") + formatTkAmount(typeTotal),
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Bold,
-            color = if (isLiability) MaterialTheme.colorScheme.error else StatusSafe
+            color = if (isLiability || typeTotal < -0.005) MaterialTheme.colorScheme.error else StatusSafe
         )
     }
 }
@@ -1341,11 +1365,12 @@ internal fun AccountCard(
                     color = if (isLiability) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            val isNegativeDisplay = if (isLiability) balance > 0.005 else balance < -0.005
             Text(
-                text = (if (isLiability && balance > 0) "−" else "") + String.format(Locale.US, "Tk %,.0f", kotlin.math.abs(balance)),
+                text = (if (isNegativeDisplay) "−" else "") + formatTkAmount(balance),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = if (isLiability) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                color = if (isLiability || balance < -0.005) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
             )
         }
     }

@@ -1,23 +1,30 @@
 package com.finmagic.ui.home
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -26,9 +33,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -43,6 +50,7 @@ import com.finmagic.ui.settings.SettingsViewModel
 fun HomeScreen(
     onAccountClick: (Long) -> Unit = {},
     onCardClick: (Long) -> Unit = {},
+    onChartsClick: () -> Unit = {},
     historyResetTick: Int = 0
 ) {
     val accountsVm: AccountsViewModel = hiltViewModel()
@@ -66,18 +74,7 @@ fun HomeScreen(
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "FinMagic",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                windowInsets = WindowInsets(0, 0, 0, 0)
-            )
-        },
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         floatingActionButton = {
             if (selectedTab == 0 || selectedTab == 1) {
                 FloatingActionButton(
@@ -96,29 +93,57 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            SingleChoiceSegmentedButtonRow(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp)
+                    .padding(start = 12.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                SegmentedButton(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3),
-                    modifier = Modifier.testTag("home_tab_history")
-                ) { Text("History") }
-                SegmentedButton(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3),
-                    modifier = Modifier.testTag("home_tab_accounts")
-                ) { Text("Accounts") }
-                SegmentedButton(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3),
-                    modifier = Modifier.testTag("home_tab_cards")
-                ) { Text("Cards") }
+                SingleChoiceSegmentedButtonRow(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    SegmentedButton(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3),
+                        modifier = Modifier.testTag("home_tab_history")
+                    ) { Text("History") }
+                    SegmentedButton(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3),
+                        modifier = Modifier.testTag("home_tab_accounts")
+                    ) { Text("Accounts") }
+                    SegmentedButton(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3),
+                        modifier = Modifier.testTag("home_tab_cards")
+                    ) { Text("Cards") }
+                }
+
+                IconButton(
+                    onClick = onChartsClick,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("open_charts_button")
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.BarChart,
+                                contentDescription = "Open Charts",
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                    }
+                }
             }
 
             when (selectedTab) {

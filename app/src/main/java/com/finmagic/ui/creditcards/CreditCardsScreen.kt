@@ -110,6 +110,7 @@ fun CreditCardsScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = if (showTopBar) {
             {
                 TopAppBar(
@@ -141,7 +142,7 @@ fun CreditCardsScreen(
                     selectedTab = tab
                     onTabSelected(tab)
                 },
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 1.dp)
             )
 
             PullToRefreshBox(
@@ -930,14 +931,14 @@ private fun CardsTabBar(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(4.dp),
+                .padding(2.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             CardsTabPill(
@@ -981,10 +982,10 @@ private fun CardsTabPill(
 
     Surface(
         modifier = modifier
-            .height(38.dp)
+            .height(34.dp)
             .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(10.dp),
         color = containerColor,
         tonalElevation = if (selected) 2.dp else 0.dp
     ) {

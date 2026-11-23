@@ -52,9 +52,17 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.sp
 import com.finmagic.data.local.AccountTypeConfig
 import com.finmagic.data.local.entity.Account
 import com.finmagic.data.local.entity.AccountTransaction
+import com.finmagic.data.repository.AccountRepository
 import com.finmagic.data.sms.parsers.TxnCategory
 import com.finmagic.ui.theme.StatusSafe
 import java.text.SimpleDateFormat
@@ -63,10 +71,16 @@ import java.util.Date
 import java.util.Locale
 
 
+private fun formatTrailBalance(amount: Double): String {
+    val sign = if (amount < 0) "−" else ""
+    return "${sign}Tk ${String.format(Locale.US, "%,.2f", kotlin.math.abs(amount))}"
+}
+
 @Composable
 fun TxnRow(
     txn: AccountTransaction,
     runningBalance: Double? = null,
+    balanceTrail: AccountRepository.BalanceTrail? = null,
     accountName: String? = null,
     onTap: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
@@ -78,9 +92,11 @@ fun TxnRow(
     val amountColor = if (isIn) StatusSafe else MaterialTheme.colorScheme.error
     val displayCategory = categoryLabel(txn.category, categoryNicknames)
 
+    val hasTrail = balanceTrail != null
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (hasTrail) Modifier.defaultMinSize(minHeight = 78.dp) else Modifier)
             .then(if (onTap != null) Modifier.clickable(onClick = onTap) else Modifier),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
@@ -88,88 +104,130 @@ fun TxnRow(
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = if (hasTrail) 10.dp else 6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (accountName != null) {
-                        Text(
-                            text = "$accountName • ",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    val mainText = if (!txn.counterparty.isNullOrBlank() && 
-                        !txn.counterparty.equals(txn.category, ignoreCase = true)) {
-                        txn.counterparty
-                    } else if (isIn) {
-                        "Credit"
-                    } else {
-                        "Spent"
-                    }
-                    
-                    Text(
-                        text = mainText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    val categoryChipLabel = if (txn.category != null &&
-                        !txn.category.equals(txn.counterparty, ignoreCase = true)) {
-                        displayCategory
-                    } else if (onUpdateCategory != null && txn.category == null) {
-                        "Categorize"
-                    } else {
-                        null
-                    }
-
-                    categoryChipLabel?.let { cat ->
-                        val chipColor = categoryColor(txn.category ?: cat)
-                        AssistChip(
-                            onClick = {
-                                if (onUpdateCategory != null) {
-                                    showCategoryDialog = true
-                                }
-                            },
-                            label = { Text(cat, style = MaterialTheme.typography.labelSmall) },
-                            modifier = Modifier.height(24.dp),
-                            colors = AssistChipDefaults.assistChipColors(
-                                containerColor = chipColor.copy(alpha = 0.18f),
-                                labelColor = chipColor
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (accountName != null) {
+                            Text(
+                                text = "$accountName • ",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
                             )
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                    }
-                    SimpleDateFormat("hh:mm a", Locale.US).format(Date(txn.occurredAt)).let {
+                        }
+                        val mainText = if (!txn.counterparty.isNullOrBlank() &&
+                            !txn.counterparty.equals(txn.category, ignoreCase = true)
+                        ) {
+                            txn.counterparty
+                        } else if (isIn) {
+                            "Credit"
+                        } else {
+                            "Spent"
+                        }
+
                         Text(
-                            text = it,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = mainText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val categoryChipLabel = if (txn.category != null &&
+                            !txn.category.equals(txn.counterparty, ignoreCase = true)
+                        ) {
+                            displayCategory
+                        } else if (onUpdateCategory != null && txn.category == null) {
+                            "Categorize"
+                        } else {
+                            null
+                        }
+
+                        categoryChipLabel?.let { cat ->
+                            val chipColor = categoryColor(txn.category ?: cat)
+                            AssistChip(
+                                onClick = {
+                                    if (onUpdateCategory != null) {
+                                        showCategoryDialog = true
+                                    }
+                                },
+                                label = { Text(cat, style = MaterialTheme.typography.labelSmall) },
+                                modifier = Modifier.height(24.dp),
+                                colors = AssistChipDefaults.assistChipColors(
+                                    containerColor = chipColor.copy(alpha = 0.18f),
+                                    labelColor = chipColor
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
+                        SimpleDateFormat("hh:mm a", Locale.US).format(Date(txn.occurredAt)).let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = (if (isIn) "+" else "−") + String.format(Locale.US, "Tk %,.2f", txn.amount),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = amountColor
+                    )
+                    if (balanceTrail == null) {
+                        runningBalance?.let { balance ->
+                            Text(
+                                text = formatTrailBalance(balance),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = (if (isIn) "+" else "−") + String.format(Locale.US, "Tk %,.2f", txn.amount),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = amountColor
+
+            if (balanceTrail != null) {
+                HorizontalDivider(
+                    thickness = 0.5.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
                 )
-                runningBalance?.let { balance ->
-                    Text(
-                        text = String.format(Locale.US, "Tk %,.2f", balance),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                val mutedColor = MaterialTheme.colorScheme.onSurfaceVariant
+                val afterColor = if (balanceTrail.after < 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                val trailLabel = if (!accountName.isNullOrBlank()) "$accountName bal" else "Balance"
+                val trailText = buildAnnotatedString {
+                    withStyle(SpanStyle(color = mutedColor)) {
+                        append("$trailLabel: ${formatTrailBalance(balanceTrail.before)} → ")
+                    }
+                    withStyle(SpanStyle(color = afterColor, fontWeight = FontWeight.SemiBold)) {
+                        append(formatTrailBalance(balanceTrail.after))
+                    }
                 }
+                Text(
+                    text = trailText,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("txn_balance_trail_${txn.id}")
+                )
             }
         }
     }
@@ -395,23 +453,8 @@ fun categoryColor(category: String): androidx.compose.ui.graphics.Color {
 fun dayLabel(dayStartMillis: Long): String =
     SimpleDateFormat("EEEE, dd MMM yyyy", Locale.US).format(Date(dayStartMillis))
 
-fun computeRunningBalances(transactions: List<AccountTransaction>): Map<Long, Double> {
-    val result = mutableMapOf<Long, Double>()
-    var running: Double? = null
-    for (txn in transactions.sortedWith(compareBy({ it.occurredAt }, { it.id }))) {
-        running = when {
-            txn.balanceAfter != null -> txn.balanceAfter
-            running != null -> if (txn.direction == AccountTransaction.DIRECTION_IN) {
-                running + txn.amount
-            } else {
-                running - txn.amount
-            }
-            else -> null
-        }
-        running?.let { result[txn.id] = it }
-    }
-    return result
-}
+fun computeRunningBalances(transactions: List<AccountTransaction>): Map<Long, Double> =
+    AccountRepository.computeBalanceTrails(transactions).mapValues { it.value.after }
 
 /**
  * Dialog for adjusting the Cash account balance.

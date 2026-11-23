@@ -60,6 +60,13 @@ sealed class Screen(
         unselectedIcon = Icons.Outlined.Sms
     )
 
+    data object Charts : Screen(
+        route = "charts",
+        title = "Charts",
+        selectedIcon = Icons.Filled.BarChart,
+        unselectedIcon = Icons.Outlined.BarChart
+    )
+
 }
 
 val bottomNavScreens = listOf(

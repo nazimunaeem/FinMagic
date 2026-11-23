@@ -73,6 +73,7 @@ fun CardDetailScreen(
     val paidBills = remember(bills) { bills.filter { it.isPaid } }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = {

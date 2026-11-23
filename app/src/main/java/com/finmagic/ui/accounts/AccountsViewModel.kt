@@ -57,7 +57,8 @@ data class AccountsUiState(
     val expensesByCategory: List<CategoryTotal> = emptyList(),
     val incomeByCategory: List<CategoryTotal> = emptyList(),
     val archivedAccounts: List<Account> = emptyList(),
-    val recentTransactions: List<AccountTransactionWithAccount> = emptyList()
+    val recentTransactions: List<AccountTransactionWithAccount> = emptyList(),
+    val balanceTrails: Map<Long, AccountRepository.BalanceTrail> = emptyMap()
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -89,7 +90,8 @@ class AccountsViewModel @Inject constructor(
         val expenses: List<CategoryTotal>,
         val income: List<CategoryTotal>,
         val archived: List<Account>,
-        val transactions: List<AccountTransactionWithAccount>
+        val transactions: List<AccountTransactionWithAccount>,
+        val balanceTrails: Map<Long, AccountRepository.BalanceTrail>
     )
 
     private data class TypesAndCardsBundle(
@@ -101,14 +103,24 @@ class AccountsViewModel @Inject constructor(
 
     val uiState: StateFlow<AccountsUiState> =
         monthRange.flatMapLatest { (ms, me) ->
+            val txnsCombined = combine(
+                accountRepository.observeAllTransactionsWithAccount(),
+                accountRepository.observeAllTransactionsIncludingDirectSet()
+            ) { transactions, allTxns ->
+                val trails = HashMap<Long, AccountRepository.BalanceTrail>(allTxns.size)
+                allTxns.groupBy { it.accountId }.values.forEach { acctTxns ->
+                    trails.putAll(AccountRepository.computeBalanceTrails(acctTxns))
+                }
+                transactions to trails
+            }
             val ledgerFlow = combine(
                 accountRepository.observeSummaries(ms, me),
                 accountRepository.observeMonthlyExpenseByCategory(ms, me),
                 accountRepository.observeMonthlyIncomeByCategory(ms, me),
                 accountRepository.observeArchived(),
-                accountRepository.observeAllTransactionsWithAccount()
-            ) { summaries, expenses, income, archived, transactions ->
-                LedgerBundle(summaries, expenses, income, archived, transactions)
+                txnsCombined
+            ) { summaries, expenses, income, archived, (transactions, trails) ->
+                LedgerBundle(summaries, expenses, income, archived, transactions, trails)
             }
             val metaFlow = combine(
                 preferenceManager.allAccountTypes,
@@ -169,7 +181,8 @@ class AccountsViewModel @Inject constructor(
                     expensesByCategory = ledger.expenses.filter { it.total > 0.0 },
                     incomeByCategory = ledger.income.filter { it.total > 0.0 },
                     archivedAccounts = ledger.archived,
-                    recentTransactions = ledger.transactions
+                    recentTransactions = ledger.transactions,
+                    balanceTrails = ledger.balanceTrails
                 )
             }
         }

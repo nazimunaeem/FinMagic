@@ -12,6 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
@@ -58,6 +59,7 @@ import com.finmagic.data.local.PreferenceManager
 import com.finmagic.ui.accounts.AccountDetailScreen
 import com.finmagic.ui.accounts.AccountsScreen
 import com.finmagic.ui.accounts.MyAccountsScreen
+import com.finmagic.ui.charts.ChartsScreen
 import com.finmagic.ui.creditcards.CardDetailScreen
 import com.finmagic.ui.creditcards.CreditCardsScreen
 import com.finmagic.ui.expenses.ExpensesScreen
@@ -266,7 +268,9 @@ fun MainApp(
         NavHost(
             navController = navController,
             startDestination = Screen.Home.route,
-            modifier = Modifier.padding(innerPadding)
+            modifier = Modifier
+                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
         ) {
             composable(Screen.Home.route) {
                 HomeScreen(
@@ -276,8 +280,17 @@ fun MainApp(
                     onCardClick = { cardId ->
                         navController.navigate("cards/$cardId")
                     },
+                    onChartsClick = {
+                        navController.navigate(Screen.Charts.route) {
+                            launchSingleTop = true
+                        }
+                    },
                     historyResetTick = homeHistoryResetTick
                 )
+            }
+
+            composable(Screen.Charts.route) {
+                ChartsScreen(onBack = { navController.popBackStack() })
             }
 
             composable(Screen.CreditCards.route) {
@@ -290,7 +303,13 @@ fun MainApp(
                 )
             }
             composable(Screen.Expenses.route) {
-                ExpensesScreen()
+                ExpensesScreen(
+                    onChartsClick = {
+                        navController.navigate(Screen.Charts.route) {
+                            launchSingleTop = true
+                        }
+                    }
+                )
             }
             composable(
                 route = "cards/{cardId}",

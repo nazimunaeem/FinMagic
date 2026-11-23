@@ -62,6 +62,9 @@ interface AccountTransactionDao {
     @Query("SELECT * FROM account_transactions WHERE category != 'DirectSet' ORDER BY occurredAt DESC, id DESC")
     fun observeAll(): Flow<List<AccountTransaction>>
 
+    @Query("SELECT * FROM account_transactions ORDER BY occurredAt ASC, id ASC")
+    fun observeAllIncludingDirectSet(): Flow<List<AccountTransaction>>
+
     @Query("""
         SELECT t.*, a.name AS accountName, a.kind AS accountKind
         FROM account_transactions t

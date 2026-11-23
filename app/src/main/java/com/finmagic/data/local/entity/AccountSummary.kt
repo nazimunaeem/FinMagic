@@ -12,9 +12,11 @@ data class AccountSummary(
     val monthIn: Double,
     val monthOut: Double,
     /** Millis of the newest non-direct-set transaction; used for activity ordering. */
-    val lastActivity: Long = 0L
+    val lastActivity: Long = 0L,
+    /** Authoritative chronological balance accounting for balanceAfter anchors and later txns. */
+    val currentBalance: Double? = null
 ) {
-    /** Balance shown in UI: bank-reported when available, else computed. */
+    /** Balance shown in UI: chronological running balance when available, else bank-reported or computed. */
     val displayBalance: Double
-        get() = if (account.kind == Account.KIND_CASH) computedBalance else (latestBalance ?: computedBalance)
+        get() = currentBalance ?: if (account.kind == Account.KIND_CASH) computedBalance else (latestBalance ?: computedBalance)
 }

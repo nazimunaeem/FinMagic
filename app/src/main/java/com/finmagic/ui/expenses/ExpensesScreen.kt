@@ -17,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -47,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -75,7 +77,10 @@ private val monthShort = { m: Int ->
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ExpensesScreen(viewModel: ExpensesViewModel = hiltViewModel()) {
+fun ExpensesScreen(
+    onChartsClick: (() -> Unit)? = null,
+    viewModel: ExpensesViewModel = hiltViewModel()
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val availableYears by viewModel.availableYears.collectAsStateWithLifecycle()
     val categoryNicknames by viewModel.categoryNicknames.collectAsStateWithLifecycle()
@@ -101,9 +106,20 @@ fun ExpensesScreen(viewModel: ExpensesViewModel = hiltViewModel()) {
     LaunchedEffect(Unit) { viewModel.refresh() }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = { Text("Expenses") },
+                actions = {
+                    if (onChartsClick != null) {
+                        IconButton(
+                            onClick = onChartsClick,
+                            modifier = Modifier.testTag("expenses_open_charts_button")
+                        ) {
+                            Icon(Icons.Filled.BarChart, contentDescription = "Open Charts")
+                        }
+                    }
+                },
                 windowInsets = WindowInsets(0, 0, 0, 0)
             )
         }

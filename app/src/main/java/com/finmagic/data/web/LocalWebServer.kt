@@ -392,8 +392,11 @@ class LocalWebServer @Inject constructor(
 
         val accountDtos = accounts.map { acct ->
             val acctTxns = txnDao.getAllByAccountOnce(acct.id)
-            val latestBal = if (acct.kind != Account.KIND_CASH) txnDao.getLatestBalanceOnce(acct.id) else null
-            val bal = latestBal ?: AccountRepository.effectiveBalance(acctTxns)
+            val bal = if (acct.kind == Account.KIND_CASH) {
+                AccountRepository.effectiveBalance(acctTxns)
+            } else {
+                AccountRepository.computeAccountBalance(acctTxns)
+            }
             mapOf(
                 "id" to acct.id,
                 "name" to acct.displayName,
@@ -796,7 +799,7 @@ function render(){
   DATA.accounts.forEach(a => { (grouped[a.accountType] = grouped[a.accountType] || []).push(a); });
   let acctHtml = '';
   Object.entries(grouped).forEach(([type, list]) => {
-    const tot = list.reduce((acc,x)=>acc+x.balance,0);
+    const tot = list.filter(x => x.includeInTotal).reduce((acc, x) => acc + (x.isLiability ? -Math.abs(x.balance) : x.balance), 0);
     acctHtml += `<div style="margin-top:10px"><strong>${'$'}{esc(type)}</strong> — Type Total: <strong>${'$'}{fmt(tot)}</strong>`;
     list.forEach(a => {
       acctHtml += `<div class="row">

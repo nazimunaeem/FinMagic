@@ -66,6 +66,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.finmagic.data.local.entity.Account
 import com.finmagic.data.local.entity.AccountTransaction
+import com.finmagic.data.repository.AccountRepository
 import com.finmagic.ui.theme.StatusSafe
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -105,7 +106,7 @@ fun AccountDetailScreen(
     var historyYear by rememberSaveable { mutableIntStateOf(nowCal.get(Calendar.YEAR)) }
     var historyMonth by rememberSaveable { mutableIntStateOf(nowCal.get(Calendar.MONTH)) }
 
-    val runningBalances = remember(transactions) { computeRunningBalances(transactions) }
+    val balanceTrails = remember(transactions) { AccountRepository.computeBalanceTrails(transactions) }
     val dayGroups = remember(transactions, historyYear, historyMonth) {
         val cal = Calendar.getInstance().apply {
             set(historyYear, historyMonth, 1, 0, 0, 0)
@@ -122,6 +123,7 @@ fun AccountDetailScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = {
@@ -246,7 +248,7 @@ fun AccountDetailScreen(
                             TxnRow(
                                 txn = txn,
                                 categoryNicknames = categoryNicknames,
-                                runningBalance = runningBalances[txn.id],
+                                balanceTrail = balanceTrails[txn.id],
                                 onTap = { selectedTxn = txn },
                                 onUpdateCategory = { newCategory ->
                                     viewModel.updateTransactionCategory(txn.id, newCategory)
