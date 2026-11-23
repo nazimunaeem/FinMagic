@@ -110,47 +110,52 @@ class GitHubUpdateChecker @Inject constructor(
             currentVersionCode: Long
         ): GitHubReleaseInfo? {
             val root = JsonParser.parseString(releasesJson)
-            if (!root.isJsonArray) return null
-            val releases = root.asJsonArray
-            for (elem in releases) {
-                if (!elem.isJsonObject) continue
-                val obj = elem.asJsonObject
-                if (obj.get("draft")?.asBoolean == true) continue
-                val tag = obj.get("tag_name")?.asString?.trim().orEmpty()
-                if (tag.isBlank()) continue
-                val htmlUrl = obj.get("html_url")?.asString?.trim().orEmpty()
-                val title = obj.get("name")?.asString?.trim().orEmpty().ifBlank { tag }
-                val body = obj.get("body")?.asString?.trim().orEmpty()
-                val isPrerelease = obj.get("prerelease")?.asBoolean == true
+            val candidateObjects = when {
+                root.isJsonArray -> root.asJsonArray.mapNotNull { if (it.isJsonObject) it.asJsonObject else null }
+                root.isJsonObject -> listOf(root.asJsonObject)
+                else -> return null
+            }
 
-                var apkUrl: String? = null
-                val assets = obj.getAsJsonArray("assets")
-                if (assets != null) {
-                    for (assetElem in assets) {
-                        if (!assetElem.isJsonObject) continue
-                        val asset = assetElem.asJsonObject
-                        val name = asset.get("name")?.asString.orEmpty()
-                        if (name.endsWith(".apk", ignoreCase = true)) {
-                            apkUrl = asset.get("browser_download_url")?.asString
-                            break
-                        }
+            val nonDrafts = candidateObjects.filter { it.get("draft")?.asBoolean != true }
+            if (nonDrafts.isEmpty()) return null
+
+            // Prefer the newest Latest (non-prerelease) release; fall back to prereleases only if no Latest release exists.
+            val latestStable = nonDrafts.firstOrNull { it.get("prerelease")?.asBoolean != true }
+            val targetRelease = latestStable ?: nonDrafts.first()
+
+            val tag = targetRelease.get("tag_name")?.asString?.trim().orEmpty()
+            if (tag.isBlank()) return null
+            val htmlUrl = targetRelease.get("html_url")?.asString?.trim().orEmpty()
+            val title = targetRelease.get("name")?.asString?.trim().orEmpty().ifBlank { tag }
+            val body = targetRelease.get("body")?.asString?.trim().orEmpty()
+            val isPrerelease = targetRelease.get("prerelease")?.asBoolean == true
+
+            var apkUrl: String? = null
+            val assets = targetRelease.getAsJsonArray("assets")
+            if (assets != null) {
+                for (assetElem in assets) {
+                    if (!assetElem.isJsonObject) continue
+                    val asset = assetElem.asJsonObject
+                    val name = asset.get("name")?.asString.orEmpty()
+                    if (name.endsWith(".apk", ignoreCase = true)) {
+                        apkUrl = asset.get("browser_download_url")?.asString
+                        break
                     }
                 }
-
-                if (isRemoteVersionNewer(tag, currentVersionName, currentVersionCode)) {
-                    return GitHubReleaseInfo(
-                        tagName = tag,
-                        title = title,
-                        releaseNotes = body,
-                        htmlUrl = htmlUrl,
-                        apkDownloadUrl = apkUrl,
-                        isPrerelease = isPrerelease
-                    )
-                }
-                // Releases are ordered newest-first; if top stable/non-draft isn't newer, still allow checking next if needed
-                if (!isPrerelease) break
             }
-            return null
+
+            if (!isRemoteVersionNewer(tag, currentVersionName, currentVersionCode)) {
+                return null
+            }
+
+            return GitHubReleaseInfo(
+                tagName = tag,
+                title = title,
+                releaseNotes = body,
+                htmlUrl = htmlUrl,
+                apkDownloadUrl = apkUrl,
+                isPrerelease = isPrerelease
+            )
         }
 
         fun isRemoteVersionNewer(

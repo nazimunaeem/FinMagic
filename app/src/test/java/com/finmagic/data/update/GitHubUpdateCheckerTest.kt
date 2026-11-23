@@ -79,4 +79,42 @@ class GitHubUpdateCheckerTest {
 
         assertNull(GitHubUpdateChecker.findNewerRelease(json, "1.0.0", 1))
     }
+
+    @Test
+    fun findNewerRelease_picksLatestNonPrereleaseDebugReleaseOverPrerelease() {
+        val json = """
+            [
+              {
+                "tag_name": "debug-20",
+                "name": "Old style prerelease",
+                "draft": false,
+                "prerelease": true,
+                "html_url": "https://github.com/nazimunaeem/FinMagic/releases/tag/debug-20",
+                "assets": []
+              },
+              {
+                "tag_name": "debug-19",
+                "name": "FinMagic debug-19 (Debug)",
+                "draft": false,
+                "prerelease": false,
+                "html_url": "https://github.com/nazimunaeem/FinMagic/releases/tag/debug-19",
+                "assets": [
+                  {
+                    "name": "FinMagic-debug-19-debug.apk",
+                    "browser_download_url": "https://github.com/nazimunaeem/FinMagic/releases/download/debug-19/FinMagic-debug-19-debug.apk"
+                  }
+                ]
+              }
+            ]
+        """.trimIndent()
+
+        val release = GitHubUpdateChecker.findNewerRelease(json, "debug-10", 10)
+        assertNotNull(release)
+        assertEquals("debug-19", release!!.tagName)
+        assertFalse(release.isPrerelease)
+        assertEquals(
+            "https://github.com/nazimunaeem/FinMagic/releases/download/debug-19/FinMagic-debug-19-debug.apk",
+            release.apkDownloadUrl
+        )
+    }
 }

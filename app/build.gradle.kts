@@ -13,8 +13,8 @@ android {
         applicationId = "com.finmagic"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = (project.findProperty("finmagicVersionCode") as String?)?.toIntOrNull() ?: 1
+        versionName = (project.findProperty("finmagicVersionName") as String?) ?: "1.0.0"
     }
 
     signingConfigs {
