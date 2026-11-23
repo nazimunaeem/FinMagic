@@ -163,15 +163,16 @@ class GitHubUpdateChecker @Inject constructor(
             currentVersionName: String,
             currentVersionCode: Long
         ): Boolean {
-            val cleanRemote = remoteTag.trim().removePrefix("v").removePrefix("V")
+            val cleanRemote = normalizeTagOrVersion(remoteTag)
             if (cleanRemote.startsWith("debug-", ignoreCase = true)) {
                 val remoteBuild = cleanRemote.removePrefix("debug-").toLongOrNull() ?: return false
                 return remoteBuild > currentVersionCode
             }
+            val cleanLocal = normalizeTagOrVersion(currentVersionName)
             val remoteParts = parseSemverParts(cleanRemote)
-            val localParts = parseSemverParts(currentVersionName.trim().removePrefix("v").removePrefix("V"))
+            val localParts = parseSemverParts(cleanLocal)
             if (remoteParts == null || localParts == null) {
-                return cleanRemote != currentVersionName.trim().removePrefix("v").removePrefix("V")
+                return cleanRemote != cleanLocal
             }
             val maxLen = maxOf(remoteParts.size, localParts.size)
             for (i in 0 until maxLen) {
@@ -181,6 +182,15 @@ class GitHubUpdateChecker @Inject constructor(
             }
             return false
         }
+
+        private fun normalizeTagOrVersion(raw: String): String =
+            raw.trim()
+                .removePrefix("FinMagic_")
+                .removePrefix("FinMagic-")
+                .removePrefix("finmagic_")
+                .removePrefix("finmagic-")
+                .removePrefix("v")
+                .removePrefix("V")
 
         private fun parseSemverParts(version: String): List<Int>? {
             val base = version.substringBefore('-').substringBefore('+')

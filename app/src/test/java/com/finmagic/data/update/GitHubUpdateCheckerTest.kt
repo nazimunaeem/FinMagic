@@ -117,4 +117,36 @@ class GitHubUpdateCheckerTest {
             release.apkDownloadUrl
         )
     }
+
+    @Test
+    fun finMagicPrefixedReleaseTag_parsesAndComparesSemver() {
+        assertFalse(GitHubUpdateChecker.isRemoteVersionNewer("FinMagic_v2.0.1", "2.0.1", 1))
+        assertTrue(GitHubUpdateChecker.isRemoteVersionNewer("FinMagic_v2.0.2", "2.0.1", 1))
+
+        val json = """
+            [
+              {
+                "tag_name": "FinMagic_v2.0.2",
+                "name": "FinMagic_v2.0.2",
+                "draft": false,
+                "prerelease": false,
+                "html_url": "https://github.com/nazimunaeem/FinMagic/releases/tag/FinMagic_v2.0.2",
+                "assets": [
+                  {
+                    "name": "FinMagic_v2.0.2.apk",
+                    "browser_download_url": "https://github.com/nazimunaeem/FinMagic/releases/download/FinMagic_v2.0.2/FinMagic_v2.0.2.apk"
+                  }
+                ]
+              }
+            ]
+        """.trimIndent()
+
+        val release = GitHubUpdateChecker.findNewerRelease(json, "2.0.1", 1)
+        assertNotNull(release)
+        assertEquals("FinMagic_v2.0.2", release!!.tagName)
+        assertEquals(
+            "https://github.com/nazimunaeem/FinMagic/releases/download/FinMagic_v2.0.2/FinMagic_v2.0.2.apk",
+            release.apkDownloadUrl
+        )
+    }
 }

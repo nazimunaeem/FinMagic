@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 37
         versionCode = (project.findProperty("finmagicVersionCode") as String?)?.toIntOrNull() ?: 1
-        versionName = (project.findProperty("finmagicVersionName") as String?) ?: "1.0.0"
+        versionName = (project.findProperty("finmagicVersionName") as String?) ?: "2.0.1"
     }
 
     signingConfigs {
@@ -29,7 +29,6 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
             signingConfig = signingConfigs.getByName("debugConfig")
         }
         release {
