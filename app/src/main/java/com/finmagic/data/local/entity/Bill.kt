@@ -54,10 +54,8 @@ data class Bill(
         }
     }
 
-    private val _computedDaysUntilDue by lazy { computeDaysUntilDue() }
-
     val daysUntilDue: Long
-        get() = _computedDaysUntilDue
+        get() = computeDaysUntilDue()
 
     val dueStatus: DueStatus
         get() = when {

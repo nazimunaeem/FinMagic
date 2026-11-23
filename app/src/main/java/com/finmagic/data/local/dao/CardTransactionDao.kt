@@ -39,4 +39,13 @@ interface CardTransactionDao {
 
     @Query("DELETE FROM card_transactions WHERE smsBody = :smsBody")
     suspend fun deleteBySmsBody(smsBody: String)
+
+    @Query("SELECT * FROM card_transactions ORDER BY occurredAt ASC, id ASC")
+    suspend fun getAllOnce(): List<CardTransaction>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllReplace(txns: List<CardTransaction>)
+
+    @Query("DELETE FROM card_transactions")
+    suspend fun clearAll()
 }

@@ -1,8 +1,11 @@
 package com.finmagic.ui.settings
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.finmagic.data.backup.BackupManager
+import com.finmagic.data.backup.BackupPreviewSummary
 import com.finmagic.data.local.AppThemeMode
 import com.finmagic.data.local.PreferenceManager
 import com.finmagic.data.local.dao.CardTransactionDao
@@ -37,6 +40,12 @@ sealed class ExportState {
     data class Error(val message: String) : ExportState()
 }
 
+sealed class BackupUiState {
+    data object Idle : BackupUiState()
+    data class Working(val message: String) : BackupUiState()
+    data class Message(val text: String, val isError: Boolean = false) : BackupUiState()
+}
+
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     application: Application,
@@ -45,7 +54,8 @@ class SettingsViewModel @Inject constructor(
     private val cardTransactionDao: CardTransactionDao,
     private val preferenceManager: PreferenceManager,
     private val localWebServer: LocalWebServer,
-    private val gitHubUpdateChecker: GitHubUpdateChecker
+    private val gitHubUpdateChecker: GitHubUpdateChecker,
+    private val backupManager: BackupManager
 ) : AndroidViewModel(application) {
 
     val webServerState: StateFlow<WebServerState> = localWebServer.state
@@ -65,6 +75,24 @@ class SettingsViewModel @Inject constructor(
 
     private val _exportState = MutableStateFlow<ExportState>(ExportState.Idle)
     val exportState: StateFlow<ExportState> = _exportState.asStateFlow()
+
+    private val _backupUiState = MutableStateFlow<BackupUiState>(BackupUiState.Idle)
+    val backupUiState: StateFlow<BackupUiState> = _backupUiState.asStateFlow()
+
+    private val _restorePreview = MutableStateFlow<Pair<Uri, BackupPreviewSummary>?>(null)
+    val restorePreview: StateFlow<Pair<Uri, BackupPreviewSummary>?> = _restorePreview.asStateFlow()
+
+    val persistentBackupEnabled: StateFlow<Boolean> = preferenceManager.persistentBackupEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
+    val persistentBackupUri: StateFlow<String?> = preferenceManager.persistentBackupUri
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val lastBackupAt: StateFlow<Long> = preferenceManager.lastBackupAt
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+
+    val lastBackupLabel: StateFlow<String?> = preferenceManager.lastBackupLabel
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val notificationsEnabled: StateFlow<Boolean> = preferenceManager.notificationsEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
@@ -402,5 +430,101 @@ class SettingsViewModel @Inject constructor(
 
     fun resetExportState() {
         _exportState.value = ExportState.Idle
+    }
+
+    // ---- Persistent File & Full Backup / Restore ----
+
+    fun setPersistentBackupEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferenceManager.setPersistentBackupEnabled(enabled)
+            if (enabled && backupManager.hasMeaningfulData()) {
+                backupManager.writeToPersistentFile()
+            }
+        }
+    }
+
+    fun backupNow() {
+        viewModelScope.launch {
+            _backupUiState.value = BackupUiState.Working("Saving backup...")
+            val result = backupManager.writeToPersistentFile()
+            _backupUiState.value = result.fold(
+                onSuccess = { label ->
+                    BackupUiState.Message("Backup saved to $label")
+                },
+                onFailure = { err ->
+                    BackupUiState.Message(err.message ?: "Backup failed", isError = true)
+                }
+            )
+        }
+    }
+
+    fun saveBackupToUri(uri: Uri) {
+        viewModelScope.launch {
+            _backupUiState.value = BackupUiState.Working("Writing backup file...")
+            val result = backupManager.writeBackupToUri(uri, persistAsTarget = true)
+            _backupUiState.value = result.fold(
+                onSuccess = { label ->
+                    BackupUiState.Message("Backup saved to $label (pinned for auto-sync)")
+                },
+                onFailure = { err ->
+                    BackupUiState.Message(err.message ?: "Failed to save backup file", isError = true)
+                }
+            )
+        }
+    }
+
+    fun clearCustomBackupUri() {
+        viewModelScope.launch {
+            preferenceManager.setPersistentBackupUri(null)
+            _backupUiState.value = BackupUiState.Message("Custom backup file unlinked")
+        }
+    }
+
+    fun requestRestorePreview(uri: Uri) {
+        viewModelScope.launch {
+            _backupUiState.value = BackupUiState.Working("Reading backup file...")
+            val result = backupManager.previewBackupFromUri(uri)
+            result.fold(
+                onSuccess = { summary ->
+                    _restorePreview.value = uri to summary
+                    _backupUiState.value = BackupUiState.Idle
+                },
+                onFailure = { err ->
+                    _backupUiState.value = BackupUiState.Message(
+                        err.message ?: "Could not read backup file",
+                        isError = true
+                    )
+                }
+            )
+        }
+    }
+
+    fun confirmRestoreFromPending() {
+        val pending = _restorePreview.value ?: return
+        viewModelScope.launch {
+            _restorePreview.value = null
+            _backupUiState.value = BackupUiState.Working("Restoring accounts, cards & rules...")
+            val result = backupManager.restoreFromUri(pending.first)
+            _backupUiState.value = result.fold(
+                onSuccess = { summary ->
+                    BackupUiState.Message(
+                        "Restored ${summary.accountCount} accounts, ${summary.cardCount} cards, ${summary.transactionCount} transactions"
+                    )
+                },
+                onFailure = { err ->
+                    BackupUiState.Message(err.message ?: "Restore failed", isError = true)
+                }
+            )
+        }
+    }
+
+    fun dismissRestorePreview() {
+        _restorePreview.value = null
+    }
+
+    fun clearBackupMessage() {
+        if (_backupUiState.value is BackupUiState.Message) {
+            _backupUiState.value = BackupUiState.Idle
+        }
     }
 }

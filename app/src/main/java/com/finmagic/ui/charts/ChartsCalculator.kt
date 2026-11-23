@@ -4,8 +4,11 @@ import com.finmagic.data.local.AccountTypeConfig
 import com.finmagic.data.local.entity.Account
 import com.finmagic.data.local.entity.AccountTransaction
 import com.finmagic.data.local.entity.BillWithCard
+import com.finmagic.data.local.entity.CardPayment
 import com.finmagic.data.local.entity.CardTransaction
+import com.finmagic.data.local.entity.CreditCard
 import com.finmagic.data.repository.AccountRepository
+import com.finmagic.data.repository.CardRepository
 import com.finmagic.data.sms.parsers.TxnCategory
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -102,7 +105,10 @@ object ChartsCalculator {
         accounts: List<Account>,
         txnsByAccount: Map<Long, List<AccountTransaction>>,
         bills: List<BillWithCard>,
-        nowMillis: Long = System.currentTimeMillis()
+        nowMillis: Long = System.currentTimeMillis(),
+        cards: List<CreditCard> = emptyList(),
+        cardTxns: List<CardTransaction> = emptyList(),
+        cardPayments: List<CardPayment> = emptyList()
     ): Triple<Double, Double, Double> {
         val countedAccounts = accounts.filter { !it.isArchived && it.includeInTotal }
         var assets = 0.0
@@ -131,11 +137,26 @@ object ChartsCalculator {
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
 
-        val cardLiabilities = if (cutoffMillis >= todayStart) {
-            bills.filter { !it.isPaid && !it.isSuperseded }
+        val cardIds = cards.map { it.id }.toSet()
+        val billsByCard = bills.groupBy { it.cardId }
+
+        val knownCardOutstanding = cards.sumOf { card ->
+            CardRepository.computeCardOutstanding(
+                card = card,
+                cardBills = billsByCard[card.id].orEmpty(),
+                allCardTxns = cardTxns,
+                allPayments = cardPayments,
+                asOfMillis = cutoffMillis,
+                nowMillis = nowMillis
+            )
+        }
+
+        val orphanBills = bills.filter { it.cardId !in cardIds }
+        val orphanCardLiabilities = if (cutoffMillis >= todayStart) {
+            orphanBills.filter { !it.isPaid && !it.isSuperseded }
                 .sumOf { max(0.0, it.totalDue - it.paidAmount) }
         } else {
-            bills.filter { !it.isSuperseded && it.detectedAt <= cutoffMillis }
+            orphanBills.filter { !it.isSuperseded && it.detectedAt <= cutoffMillis }
                 .sumOf { bill ->
                     val paidAt = bill.paidAt
                     when {
@@ -149,7 +170,7 @@ object ChartsCalculator {
                 }
         }
 
-        val totalLiabilities = accountLiabilities + cardLiabilities
+        val totalLiabilities = accountLiabilities + knownCardOutstanding + orphanCardLiabilities
         val netAsset = assets - totalLiabilities
         return Triple(netAsset, assets, totalLiabilities)
     }
@@ -160,7 +181,10 @@ object ChartsCalculator {
         accounts: List<Account>,
         txnsByAccount: Map<Long, List<AccountTransaction>>,
         bills: List<BillWithCard>,
-        nowMillis: Long = System.currentTimeMillis()
+        nowMillis: Long = System.currentTimeMillis(),
+        cards: List<CreditCard> = emptyList(),
+        cardTxns: List<CardTransaction> = emptyList(),
+        cardPayments: List<CardPayment> = emptyList()
     ): List<NetAssetPoint> {
         val nowCal = Calendar.getInstance().apply { timeInMillis = nowMillis }
         val curYear = nowCal.get(Calendar.YEAR)
@@ -182,7 +206,9 @@ object ChartsCalculator {
             } else {
                 endOfDay(year, month, day)
             }
-            val (net, assets, liabilities) = computeNetAssetAt(cutoff, accounts, txnsByAccount, bills, nowMillis)
+            val (net, assets, liabilities) = computeNetAssetAt(
+                cutoff, accounts, txnsByAccount, bills, nowMillis, cards, cardTxns, cardPayments
+            )
             val date = Calendar.getInstance().apply { set(year, month, day) }.time
             NetAssetPoint(
                 label = day.toString(),
@@ -200,7 +226,10 @@ object ChartsCalculator {
         accounts: List<Account>,
         txnsByAccount: Map<Long, List<AccountTransaction>>,
         bills: List<BillWithCard>,
-        nowMillis: Long = System.currentTimeMillis()
+        nowMillis: Long = System.currentTimeMillis(),
+        cards: List<CreditCard> = emptyList(),
+        cardTxns: List<CardTransaction> = emptyList(),
+        cardPayments: List<CardPayment> = emptyList()
     ): List<NetAssetPoint> {
         val nowCal = Calendar.getInstance().apply { timeInMillis = nowMillis }
         val curYear = nowCal.get(Calendar.YEAR)
@@ -215,7 +244,9 @@ object ChartsCalculator {
 
         return (0..lastMonth).map { m ->
             val cutoff = if (year == curYear && m == curMonth) nowMillis else endOfMonth(year, m)
-            val (net, assets, liabilities) = computeNetAssetAt(cutoff, accounts, txnsByAccount, bills, nowMillis)
+            val (net, assets, liabilities) = computeNetAssetAt(
+                cutoff, accounts, txnsByAccount, bills, nowMillis, cards, cardTxns, cardPayments
+            )
             val date = Calendar.getInstance().apply { set(year, m, 1) }.time
             NetAssetPoint(
                 label = shortMonthFmt.format(date),
@@ -232,20 +263,27 @@ object ChartsCalculator {
         accounts: List<Account>,
         txnsByAccount: Map<Long, List<AccountTransaction>>,
         bills: List<BillWithCard>,
-        nowMillis: Long = System.currentTimeMillis()
+        nowMillis: Long = System.currentTimeMillis(),
+        cards: List<CreditCard> = emptyList(),
+        cardTxns: List<CardTransaction> = emptyList(),
+        cardPayments: List<CardPayment> = emptyList()
     ): List<NetAssetPoint> {
         val nowCal = Calendar.getInstance().apply { timeInMillis = nowMillis }
         val curYear = nowCal.get(Calendar.YEAR)
 
-        val earliestMillis = txnsByAccount.values.flatten().minOfOrNull { it.occurredAt }
-            ?: bills.minOfOrNull { it.detectedAt }
-            ?: nowMillis
+        val earliestMillis = listOfNotNull(
+            txnsByAccount.values.flatten().minOfOrNull { it.occurredAt },
+            cardTxns.minOfOrNull { it.occurredAt },
+            bills.minOfOrNull { it.detectedAt }
+        ).minOrNull() ?: nowMillis
         val firstYear = Calendar.getInstance().apply { timeInMillis = earliestMillis }.get(Calendar.YEAR)
             .coerceAtMost(curYear)
 
         return (firstYear..curYear).map { y ->
             val cutoff = if (y == curYear) nowMillis else endOfYear(y)
-            val (net, assets, liabilities) = computeNetAssetAt(cutoff, accounts, txnsByAccount, bills, nowMillis)
+            val (net, assets, liabilities) = computeNetAssetAt(
+                cutoff, accounts, txnsByAccount, bills, nowMillis, cards, cardTxns, cardPayments
+            )
             NetAssetPoint(
                 label = y.toString(),
                 fullLabel = "Year $y",
@@ -347,10 +385,8 @@ object ChartsCalculator {
         for (txn in allAccountTxns) {
             if (txn.occurredAt < startMillis || txn.occurredAt > endMillis) continue
             if (txn.category == TxnCategory.DIRECT_SET) continue
-            if (txn.direction == AccountTransaction.DIRECTION_IN &&
-                txn.transferId == null &&
-                txn.isExpenseOverride != -1 &&
-                txn.accountId in countedAccountIds
+            if (txn.accountId in countedAccountIds &&
+                TxnCategory.countsAsIncome(txn.isExpenseOverride, txn.direction)
             ) {
                 income += txn.amount
             }
@@ -408,10 +444,8 @@ object ChartsCalculator {
             if (txn.occurredAt < startMillis || txn.occurredAt > endMillis) continue
             if (txn.category == TxnCategory.DIRECT_SET) continue
             if (showIncome) {
-                if (txn.direction == AccountTransaction.DIRECTION_IN &&
-                    txn.transferId == null &&
-                    txn.isExpenseOverride != -1 &&
-                    txn.accountId in countedAccountIds
+                if (txn.accountId in countedAccountIds &&
+                    TxnCategory.countsAsIncome(txn.isExpenseOverride, txn.direction)
                 ) {
                     val cat = normalizeCategory(txn.category, fallback = "Income")
                     map[cat] = (map[cat] ?: 0.0) + txn.amount
@@ -452,7 +486,10 @@ object ChartsCalculator {
         accounts: List<Account>,
         txnsByAccount: Map<Long, List<AccountTransaction>>,
         bills: List<BillWithCard>,
-        accountTypes: List<AccountTypeConfig>
+        accountTypes: List<AccountTypeConfig>,
+        cards: List<CreditCard> = emptyList(),
+        cardTxns: List<CardTransaction> = emptyList(),
+        cardPayments: List<CardPayment> = emptyList()
     ): List<AllocationSlice> {
         val typeConfigMap = accountTypes.associateBy { it.name.trim().lowercase() }
         val grouped = accounts.filter { !it.isArchived && it.includeInTotal }
@@ -475,8 +512,19 @@ object ChartsCalculator {
                 slices.add(AllocationSlice(label = typeName, amount = sum, isLiability = isLiab))
             }
         }
-        val cardLiability = bills.filter { !it.isPaid && !it.isSuperseded }
+        val cardIds = cards.map { it.id }.toSet()
+        val billsByCard = bills.groupBy { it.cardId }
+        val knownCardLiability = cards.sumOf { card ->
+            CardRepository.computeCardOutstanding(
+                card = card,
+                cardBills = billsByCard[card.id].orEmpty(),
+                allCardTxns = cardTxns,
+                allPayments = cardPayments
+            )
+        }
+        val orphanCardLiability = bills.filter { it.cardId !in cardIds && !it.isPaid && !it.isSuperseded }
             .sumOf { max(0.0, it.totalDue - it.paidAmount) }
+        val cardLiability = knownCardLiability + orphanCardLiability
         if (cardLiability > 0.0) {
             slices.add(AllocationSlice(label = "Credit Cards", amount = cardLiability, isLiability = true))
         }
@@ -492,7 +540,9 @@ object ChartsCalculator {
         bills: List<BillWithCard>,
         allAccountTxns: List<AccountTransaction>,
         allCardTxns: List<CardTransaction>,
-        nowMillis: Long = System.currentTimeMillis()
+        nowMillis: Long = System.currentTimeMillis(),
+        cards: List<CreditCard> = emptyList(),
+        cardPayments: List<CardPayment> = emptyList()
     ): PeriodComparisonSnapshot {
         val nowCal = Calendar.getInstance().apply { timeInMillis = nowMillis }
         val curYear = nowCal.get(Calendar.YEAR)
@@ -510,7 +560,9 @@ object ChartsCalculator {
         }
 
         val countedIds = accounts.filter { !it.isArchived && it.includeInTotal }.map { it.id }.toSet()
-        val (netAsset, assets, liabilities) = computeNetAssetAt(cutoff, accounts, txnsByAccount, bills, nowMillis)
+        val (netAsset, assets, liabilities) = computeNetAssetAt(
+            cutoff, accounts, txnsByAccount, bills, nowMillis, cards, allCardTxns, cardPayments
+        )
         val (income, expense) = computeCashflowTotals(start, rawEnd, countedIds, allAccountTxns, allCardTxns)
         val topCats = categoryMapForRange(start, rawEnd, countedIds, allAccountTxns, allCardTxns, showIncome = false)
             .entries

@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -34,6 +35,25 @@ data class AccountTypeConfig(
     val isLiability: Boolean = false
 )
 
+data class BackupPreferencesPayload(
+    val notificationsEnabled: Boolean = true,
+    val alertRules: Set<String> = setOf("DAILY"),
+    val alertTime: String = "09:00",
+    val largeDebitAlerts: Boolean = true,
+    val largeDebitThreshold: Double = 10_000.0,
+    val biometricLockEnabled: Boolean = false,
+    val themeMode: String = AppThemeMode.LIGHT.name,
+    val categoryNicknames: Map<String, String> = emptyMap(),
+    val cashExpenseCategories: List<String> = emptyList(),
+    val cashIncomeCategories: List<String> = emptyList(),
+    val recurringTemplates: List<RecurringTemplate> = emptyList(),
+    val customAccountTypes: List<AccountTypeConfig> = emptyList(),
+    val webPortalPort: Int = 8080,
+    val webPortalAutoStart: Boolean = false,
+    val autoUpdateCheckEnabled: Boolean = true,
+    val firstScanComplete: Boolean = false
+)
+
 @Singleton
 class PreferenceManager @Inject constructor(@ApplicationContext private val context: Context) {
 
@@ -54,6 +74,10 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
     private val WEB_PORTAL_AUTO_START = booleanPreferencesKey("web_portal_auto_start")
     private val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_update_check")
     private val SKIPPED_UPDATE_TAG = stringPreferencesKey("skipped_update_tag")
+    private val PERSISTENT_BACKUP_ENABLED = booleanPreferencesKey("persistent_backup_enabled")
+    private val PERSISTENT_BACKUP_URI = stringPreferencesKey("persistent_backup_uri")
+    private val LAST_BACKUP_AT = longPreferencesKey("last_backup_at")
+    private val LAST_BACKUP_LABEL = stringPreferencesKey("last_backup_label")
 
     val notificationsEnabled: Flow<Boolean> = context.dataStore.data.map { it[NOTIFICATIONS_ENABLED] ?: true }
     val alertRules: Flow<Set<String>> = context.dataStore.data.map {
@@ -262,6 +286,88 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
         context.dataStore.edit { prefs ->
             if (tag.isNullOrBlank()) prefs.remove(SKIPPED_UPDATE_TAG)
             else prefs[SKIPPED_UPDATE_TAG] = tag
+        }
+    }
+
+    // ---- Persistent File & Full Backup ----
+
+    val persistentBackupEnabled: Flow<Boolean> = context.dataStore.data.map { it[PERSISTENT_BACKUP_ENABLED] ?: true }
+    val persistentBackupUri: Flow<String?> = context.dataStore.data.map { it[PERSISTENT_BACKUP_URI] }
+    val lastBackupAt: Flow<Long> = context.dataStore.data.map { it[LAST_BACKUP_AT] ?: 0L }
+    val lastBackupLabel: Flow<String?> = context.dataStore.data.map { it[LAST_BACKUP_LABEL] }
+
+    suspend fun setPersistentBackupEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[PERSISTENT_BACKUP_ENABLED] = enabled }
+    }
+
+    suspend fun setPersistentBackupUri(uri: String?) {
+        context.dataStore.edit { prefs ->
+            if (uri.isNullOrBlank()) prefs.remove(PERSISTENT_BACKUP_URI)
+            else prefs[PERSISTENT_BACKUP_URI] = uri
+        }
+    }
+
+    suspend fun recordBackupSuccess(atMillis: Long, label: String) {
+        context.dataStore.edit { prefs ->
+            prefs[LAST_BACKUP_AT] = atMillis
+            prefs[LAST_BACKUP_LABEL] = label
+        }
+    }
+
+    suspend fun exportSnapshot(): BackupPreferencesPayload {
+        return BackupPreferencesPayload(
+            notificationsEnabled = notificationsEnabled.first(),
+            alertRules = alertRules.first(),
+            alertTime = alertTime.first(),
+            largeDebitAlerts = largeDebitAlerts.first(),
+            largeDebitThreshold = largeDebitThreshold.first(),
+            biometricLockEnabled = biometricLockEnabled.first(),
+            themeMode = themeMode.first().name,
+            categoryNicknames = categoryNicknames.first(),
+            cashExpenseCategories = cashExpenseCategories.first(),
+            cashIncomeCategories = cashIncomeCategories.first(),
+            recurringTemplates = recurringTemplates.first(),
+            customAccountTypes = customAccountTypes.first(),
+            webPortalPort = webPortalPort.first(),
+            webPortalAutoStart = webPortalAutoStart.first(),
+            autoUpdateCheckEnabled = autoUpdateCheckEnabled.first(),
+            firstScanComplete = isFirstScanComplete.first()
+        )
+    }
+
+    suspend fun restoreFromBackup(payload: BackupPreferencesPayload) {
+        context.dataStore.edit { prefs ->
+            prefs[NOTIFICATIONS_ENABLED] = payload.notificationsEnabled
+            prefs[ALERT_RULES] = payload.alertRules
+            prefs[ALERT_TIME] = payload.alertTime.ifBlank { "09:00" }
+            prefs[LARGE_DEBIT_ALERTS] = payload.largeDebitAlerts
+            prefs[LARGE_DEBIT_THRESHOLD] = payload.largeDebitThreshold
+            prefs[BIOMETRIC_LOCK] = payload.biometricLockEnabled
+            val resolvedTheme = AppThemeMode.entries.firstOrNull { it.name == payload.themeMode } ?: AppThemeMode.LIGHT
+            prefs[THEME_MODE] = resolvedTheme.name
+            prefs[CATEGORY_NICKNAMES] = payload.categoryNicknames
+                .filterKeys { it.isNotBlank() }
+                .filterValues { it.isNotBlank() }
+                .map { (k, v) -> "$k\u0000$v" }
+                .toSet()
+            if (payload.cashExpenseCategories.isNotEmpty()) {
+                prefs[CASH_EXPENSE_CATEGORIES] = payload.cashExpenseCategories.filter { it.isNotBlank() }.joinToString("\u0000")
+            }
+            if (payload.cashIncomeCategories.isNotEmpty()) {
+                prefs[CASH_INCOME_CATEGORIES] = payload.cashIncomeCategories.filter { it.isNotBlank() }.joinToString("\u0000")
+            }
+            prefs[RECURRING_TEMPLATES] = payload.recurringTemplates.map { t ->
+                listOf(t.kind, t.title.trim(), t.amount.toString(), t.category ?: "", t.note ?: "").joinToString("\u0001")
+            }.toSet()
+            val builtInNames = com.finmagic.data.local.entity.Account.DEFAULT_TYPES.map { it.first.lowercase() }.toSet()
+            prefs[CUSTOM_ACCOUNT_TYPES] = payload.customAccountTypes
+                .filter { it.name.isNotBlank() && it.name.trim().lowercase() !in builtInNames }
+                .map { "${it.name.trim()}\u0000${if (it.isLiability) "1" else "0"}" }
+                .toSet()
+            prefs[WEB_PORTAL_PORT] = payload.webPortalPort.coerceIn(1024, 65535)
+            prefs[WEB_PORTAL_AUTO_START] = payload.webPortalAutoStart
+            prefs[AUTO_UPDATE_CHECK] = payload.autoUpdateCheckEnabled
+            prefs[FIRST_SCAN_COMPLETE] = payload.firstScanComplete
         }
     }
 }

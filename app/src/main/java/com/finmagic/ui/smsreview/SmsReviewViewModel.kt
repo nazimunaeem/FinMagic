@@ -83,6 +83,28 @@ class SmsReviewViewModel @Inject constructor(
         _message.value = null
     }
 
+    private suspend fun saveRuleAndApplyHistorical(
+        rule: SmsTeachingRule,
+        excludeRecordId: Long? = null
+    ): Int {
+        val insertedId = ruleDao.insert(rule)
+        val persistedRule = if (insertedId > 0L) rule.copy(id = insertedId) else rule
+        val unparsedList = smsRecordDao.getUnparsedSmsOnce()
+        if (unparsedList.isEmpty()) return 0
+        val appliedIds = smsTeachingEngine.applyRuleToHistorical(
+            rule = persistedRule,
+            unparsedRecords = unparsedList,
+            excludeRecordId = excludeRecordId
+        )
+        appliedIds.forEach { smsId ->
+            smsRecordDao.updateParsedStatus(smsId, true)
+        }
+        return appliedIds.size
+    }
+
+    private fun withLearnedSuffix(base: String, learnedCount: Int): String =
+        if (learnedCount > 0) "$base · learned $learnedCount previous SMS" else base
+
     fun teachSms(
         record: SmsRecord,
         accountId: Long,
@@ -97,23 +119,6 @@ class SmsReviewViewModel @Inject constructor(
         excludedKeywords: String
     ) {
         viewModelScope.launch {
-            if (saveRule && (requiredKeywords.isNotBlank() || !record.address.isNullOrBlank())) {
-                ruleDao.insert(
-                    SmsTeachingRule(
-                        name = "Rule for ${record.address ?: "Unknown"}",
-                        senderKey = record.address?.trim()?.uppercase(),
-                        requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
-                        excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
-                        action = if (direction == AccountTransaction.DIRECTION_IN) {
-                            SmsTeachingRule.ACTION_CREDIT
-                        } else {
-                            SmsTeachingRule.ACTION_DEBIT
-                        },
-                        accountId = accountId,
-                        category = category.ifBlank { null }
-                    )
-                )
-            }
             if (record.isParsed) {
                 accountRepository.replaceParsedSmsEntries(record.id)
             }
@@ -130,8 +135,26 @@ class SmsReviewViewModel @Inject constructor(
                 ) != null
             ) {
                 smsRecordDao.updateParsedStatus(record.id, true)
+                val learnedCount = if (saveRule && (requiredKeywords.isNotBlank() || !record.address.isNullOrBlank())) {
+                    saveRuleAndApplyHistorical(
+                        rule = SmsTeachingRule(
+                            name = "Rule for ${record.address ?: "Unknown"}",
+                            senderKey = record.address?.trim()?.uppercase(),
+                            requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
+                            excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
+                            action = if (direction == AccountTransaction.DIRECTION_IN) {
+                                SmsTeachingRule.ACTION_CREDIT
+                            } else {
+                                SmsTeachingRule.ACTION_DEBIT
+                            },
+                            accountId = accountId,
+                            category = category.ifBlank { null }
+                        ),
+                        excludeRecordId = record.id
+                    )
+                } else 0
                 _selectedRecord.value = null
-                _message.value = "Transaction saved"
+                _message.value = withLearnedSuffix("Transaction saved", learnedCount)
             } else {
                 _message.value = "Failed to save — duplicate or invalid amount"
             }
@@ -156,20 +179,6 @@ class SmsReviewViewModel @Inject constructor(
                 _message.value = "Failed to save — card not found or invalid amount"
                 return@launch
             }
-            if (saveRule && (requiredKeywords.isNotBlank() || !record.address.isNullOrBlank())) {
-                ruleDao.insert(
-                    SmsTeachingRule(
-                        name = "Card rule for ${record.address ?: card.displayName}",
-                        senderKey = record.address?.trim()?.uppercase(),
-                        requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
-                        excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
-                        action = SmsTeachingRule.ACTION_CARD_DEBIT,
-                        accountId = 0L,
-                        cardId = cardId,
-                        category = category.ifBlank { null }
-                    )
-                )
-            }
             if (record.isParsed) {
                 accountRepository.replaceParsedSmsEntries(record.id)
             }
@@ -188,8 +197,23 @@ class SmsReviewViewModel @Inject constructor(
             )
             if (insertedId > 0L) {
                 smsRecordDao.updateParsedStatus(record.id, true)
+                val learnedCount = if (saveRule && (requiredKeywords.isNotBlank() || !record.address.isNullOrBlank())) {
+                    saveRuleAndApplyHistorical(
+                        rule = SmsTeachingRule(
+                            name = "Card rule for ${record.address ?: card.displayName}",
+                            senderKey = record.address?.trim()?.uppercase(),
+                            requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
+                            excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
+                            action = SmsTeachingRule.ACTION_CARD_DEBIT,
+                            accountId = 0L,
+                            cardId = cardId,
+                            category = category.ifBlank { null }
+                        ),
+                        excludeRecordId = record.id
+                    )
+                } else 0
                 _selectedRecord.value = null
-                _message.value = "Card debit saved"
+                _message.value = withLearnedSuffix("Card debit saved", learnedCount)
             } else {
                 _message.value = "Failed to save card transaction"
             }
@@ -211,19 +235,6 @@ class SmsReviewViewModel @Inject constructor(
                 _message.value = "Failed to save — card not found or invalid amount"
                 return@launch
             }
-            if (saveRule && (requiredKeywords.isNotBlank() || !record.address.isNullOrBlank())) {
-                ruleDao.insert(
-                    SmsTeachingRule(
-                        name = "Card credit rule for ${record.address ?: card.displayName}",
-                        senderKey = record.address?.trim()?.uppercase(),
-                        requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
-                        excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
-                        action = SmsTeachingRule.ACTION_CARD_CREDIT,
-                        accountId = 0L,
-                        cardId = cardId
-                    )
-                )
-            }
             if (record.isParsed) {
                 accountRepository.replaceParsedSmsEntries(record.id)
             }
@@ -239,8 +250,22 @@ class SmsReviewViewModel @Inject constructor(
             )
             if (insertedId > 0L) {
                 smsRecordDao.updateParsedStatus(record.id, true)
+                val learnedCount = if (saveRule && (requiredKeywords.isNotBlank() || !record.address.isNullOrBlank())) {
+                    saveRuleAndApplyHistorical(
+                        rule = SmsTeachingRule(
+                            name = "Card credit rule for ${record.address ?: card.displayName}",
+                            senderKey = record.address?.trim()?.uppercase(),
+                            requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
+                            excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
+                            action = SmsTeachingRule.ACTION_CARD_CREDIT,
+                            accountId = 0L,
+                            cardId = cardId
+                        ),
+                        excludeRecordId = record.id
+                    )
+                } else 0
                 _selectedRecord.value = null
-                _message.value = "Card credit saved"
+                _message.value = withLearnedSuffix("Card credit saved", learnedCount)
             } else {
                 _message.value = "Failed to save — duplicate or invalid amount"
             }
@@ -257,18 +282,6 @@ class SmsReviewViewModel @Inject constructor(
         excludedKeywords: String
     ) {
         viewModelScope.launch {
-            if (saveRule && requiredKeywords.isNotBlank()) {
-                ruleDao.insert(
-                    SmsTeachingRule(
-                        name = "ATM rule for ${record.address ?: "Unknown"}",
-                        senderKey = record.address?.trim()?.uppercase(),
-                        requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
-                        excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
-                        action = SmsTeachingRule.ACTION_ATM_WITHDRAWAL,
-                        accountId = accountId
-                    )
-                )
-            }
             if (record.isParsed) {
                 accountRepository.replaceParsedSmsEntries(record.id)
             }
@@ -283,8 +296,21 @@ class SmsReviewViewModel @Inject constructor(
             )
             if (accountRepository.storeAtmWithdraw(entry, record.body, record.id) != null) {
                 smsRecordDao.updateParsedStatus(record.id, true)
+                val learnedCount = if (saveRule && (requiredKeywords.isNotBlank() || !record.address.isNullOrBlank())) {
+                    saveRuleAndApplyHistorical(
+                        rule = SmsTeachingRule(
+                            name = "ATM rule for ${record.address ?: "Unknown"}",
+                            senderKey = record.address?.trim()?.uppercase(),
+                            requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
+                            excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
+                            action = SmsTeachingRule.ACTION_ATM_WITHDRAWAL,
+                            accountId = accountId
+                        ),
+                        excludeRecordId = record.id
+                    )
+                } else 0
                 _selectedRecord.value = null
-                _message.value = "ATM withdrawal recorded"
+                _message.value = withLearnedSuffix("ATM withdrawal recorded", learnedCount)
             } else {
                 _message.value = "Failed to save — duplicate or invalid amount"
             }
@@ -302,25 +328,12 @@ class SmsReviewViewModel @Inject constructor(
         excludedKeywords: String
     ) {
         viewModelScope.launch {
-            if (saveRule && requiredKeywords.isNotBlank()) {
-                ruleDao.insert(
-                    SmsTeachingRule(
-                        name = "Transfer rule for ${record.address ?: "Unknown"}",
-                        senderKey = record.address?.trim()?.uppercase(),
-                        requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
-                        excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
-                        action = SmsTeachingRule.ACTION_TRANSFER,
-                        accountId = fromAccountId,
-                        category = "Transfer"
-                    )
-                )
-            }
             if (record.isParsed) {
                 accountRepository.replaceParsedSmsEntries(record.id)
             }
             val fromAccount = accountDao.findByIdOnce(fromAccountId) ?: return@launch
             val toAccount = accountDao.findByIdOnce(toAccountId) ?: return@launch
-            
+
             val fromEntry = com.finmagic.data.sms.parsers.LedgerEntry(
                 institution = fromAccount.bankName,
                 kind = com.finmagic.data.sms.parsers.AccountKind.valueOf(fromAccount.kind),
@@ -337,11 +350,25 @@ class SmsReviewViewModel @Inject constructor(
                 amount = amount,
                 occurredAt = occurredAt
             )
-            
+
             if (accountRepository.storeTransferPair(fromEntry, toEntry, record.body, record.id) != null) {
                 smsRecordDao.updateParsedStatus(record.id, true)
+                val learnedCount = if (saveRule && (requiredKeywords.isNotBlank() || !record.address.isNullOrBlank())) {
+                    saveRuleAndApplyHistorical(
+                        rule = SmsTeachingRule(
+                            name = "Transfer rule for ${record.address ?: "Unknown"}",
+                            senderKey = record.address?.trim()?.uppercase(),
+                            requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
+                            excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
+                            action = SmsTeachingRule.ACTION_TRANSFER,
+                            accountId = fromAccountId,
+                            category = "Transfer"
+                        ),
+                        excludeRecordId = record.id
+                    )
+                } else 0
                 _selectedRecord.value = null
-                _message.value = "Transfer recorded"
+                _message.value = withLearnedSuffix("Transfer recorded", learnedCount)
             } else {
                 _message.value = "Failed to save — duplicate or invalid amount"
             }
@@ -358,22 +385,22 @@ class SmsReviewViewModel @Inject constructor(
         excludedKeywords: String
     ) {
         viewModelScope.launch {
-            if (saveRule && requiredKeywords.isNotBlank()) {
-                ruleDao.insert(
-                    SmsTeachingRule(
+            smsRecordDao.updateParsedStatus(record.id, true)
+            val learnedCount = if (saveRule && (requiredKeywords.isNotBlank() || !record.address.isNullOrBlank())) {
+                saveRuleAndApplyHistorical(
+                    rule = SmsTeachingRule(
                         name = "Balance rule for ${record.address ?: "Unknown"}",
                         senderKey = record.address?.trim()?.uppercase(),
                         requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
                         excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
                         action = SmsTeachingRule.ACTION_BALANCE_ONLY,
                         accountId = accountId
-                    )
+                    ),
+                    excludeRecordId = record.id
                 )
-            }
-            // Balance-only doesn't create a transaction, just marks the SMS as parsed
-            smsRecordDao.updateParsedStatus(record.id, true)
+            } else 0
             _selectedRecord.value = null
-            _message.value = "Balance update recorded"
+            _message.value = withLearnedSuffix("Balance update recorded", learnedCount)
         }
     }
 
@@ -390,18 +417,6 @@ class SmsReviewViewModel @Inject constructor(
         excludedKeywords: String
     ) {
         viewModelScope.launch {
-            if (saveRule && requiredKeywords.isNotBlank()) {
-                ruleDao.insert(
-                    SmsTeachingRule(
-                        name = "Bill rule for ${record.address ?: "Unknown"}",
-                        senderKey = record.address?.trim()?.uppercase(),
-                        requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
-                        excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
-                        action = SmsTeachingRule.ACTION_DEBIT,
-                        accountId = 0
-                    )
-                )
-            }
             val bill = Bill(
                 cardId = cardId,
                 billPeriod = billPeriod,
@@ -414,8 +429,22 @@ class SmsReviewViewModel @Inject constructor(
             )
             billRepository.addBill(bill)
             smsRecordDao.updateParsedStatus(record.id, true)
+            val learnedCount = if (saveRule && (requiredKeywords.isNotBlank() || !record.address.isNullOrBlank())) {
+                saveRuleAndApplyHistorical(
+                    rule = SmsTeachingRule(
+                        name = "Bill rule for ${record.address ?: "Unknown"}",
+                        senderKey = record.address?.trim()?.uppercase(),
+                        requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
+                        excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
+                        action = SmsTeachingRule.ACTION_BILL,
+                        accountId = 0L,
+                        cardId = cardId
+                    ),
+                    excludeRecordId = record.id
+                )
+            } else 0
             _selectedRecord.value = null
-            _message.value = "Bill created"
+            _message.value = withLearnedSuffix("Bill created", learnedCount)
         }
     }
 
@@ -445,8 +474,22 @@ class SmsReviewViewModel @Inject constructor(
                 )
             )
             smsRecordDao.updateParsedStatus(record.id, true)
+            val learnedCount = if (saveRule && (requiredKeywords.isNotBlank() || !record.address.isNullOrBlank())) {
+                saveRuleAndApplyHistorical(
+                    rule = SmsTeachingRule(
+                        name = "Bill paid rule for ${record.address ?: card.displayName}",
+                        senderKey = record.address?.trim()?.uppercase(),
+                        requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
+                        excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
+                        action = SmsTeachingRule.ACTION_BILL_PAID,
+                        accountId = 0L,
+                        cardId = cardId
+                    ),
+                    excludeRecordId = record.id
+                )
+            } else 0
             _selectedRecord.value = null
-            _message.value = "Bill marked as paid"
+            _message.value = withLearnedSuffix("Bill marked as paid", learnedCount)
         }
     }
 
@@ -461,17 +504,22 @@ class SmsReviewViewModel @Inject constructor(
     fun ignoreSimilar(sender: String?) {
         viewModelScope.launch {
             if (sender.isNullOrBlank()) return@launch
-            ruleDao.insert(
-                SmsTeachingRule(
+            val learnedCount = saveRuleAndApplyHistorical(
+                rule = SmsTeachingRule(
                     name = "Block $sender",
                     senderKey = sender.trim().uppercase(),
                     requiredKeywords = KeywordJson.encode(emptyList()),
                     excludedKeywords = KeywordJson.encode(emptyList()),
                     action = SmsTeachingRule.ACTION_IGNORE,
                     accountId = 0
-                )
+                ),
+                excludeRecordId = _selectedRecord.value?.id
             )
-            _message.value = "All future messages from $sender will be ignored"
+            _selectedRecord.value?.let {
+                smsRecordDao.updateParsedStatus(it.id, true)
+                _selectedRecord.value = null
+            }
+            _message.value = withLearnedSuffix("Messages from $sender ignored", learnedCount)
         }
     }
 
@@ -530,7 +578,7 @@ class SmsReviewViewModel @Inject constructor(
 
     fun applyRuleToHistorical(rule: SmsTeachingRule) {
         viewModelScope.launch {
-            val unparsedList = unparsedSms.value
+            val unparsedList = smsRecordDao.getUnparsedSmsOnce()
             if (unparsedList.isEmpty()) {
                 _message.value = "No unparsed messages available to process"
                 return@launch

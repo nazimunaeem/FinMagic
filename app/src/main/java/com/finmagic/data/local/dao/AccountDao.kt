@@ -49,4 +49,13 @@ interface AccountDao {
     /** Cascades to account_transactions (FK ON DELETE CASCADE). */
     @Query("DELETE FROM accounts WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("SELECT * FROM accounts")
+    suspend fun getAllIncludingArchivedOnce(): List<Account>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllReplace(accounts: List<Account>)
+
+    @Query("DELETE FROM accounts")
+    suspend fun clearAll()
 }

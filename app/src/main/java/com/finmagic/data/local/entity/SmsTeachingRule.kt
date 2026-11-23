@@ -53,6 +53,8 @@ data class SmsTeachingRule(
         const val ACTION_IGNORE = "IGNORE"
         const val ACTION_CARD_DEBIT = "CARD_DEBIT"
         const val ACTION_CARD_CREDIT = "CARD_CREDIT"
+        const val ACTION_BILL = "BILL"
+        const val ACTION_BILL_PAID = "BILL_PAID"
     }
 
     val actionLabel: String
@@ -65,6 +67,8 @@ data class SmsTeachingRule(
             ACTION_IGNORE -> "Ignore"
             ACTION_CARD_DEBIT -> "Card Debit"
             ACTION_CARD_CREDIT -> "Card Credit"
+            ACTION_BILL -> "Create Bill"
+            ACTION_BILL_PAID -> "Bill Paid"
             else -> action
         }
 

@@ -514,9 +514,14 @@ fun AccountsScreen(
                 )
                 detailTxn = null
             },
-            alreadyIncome = false,
+            alreadyIncome = com.finmagic.data.sms.parsers.TxnCategory.countsAsIncome(
+                txn.isExpenseOverride, txn.direction
+            ),
             onSetIncome = { include ->
-                viewModel.setExpenseOverride(txn.id, if (include) 0 else -1)
+                viewModel.setExpenseOverride(
+                    txn.id,
+                    if (include) AccountTransaction.EXPENSE_INCLUDED else AccountTransaction.EXPENSE_AUTO
+                )
                 detailTxn = null
             },
             onEditDetails = {
@@ -1287,7 +1292,17 @@ private fun CardsLiabilitySummaryCard(
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
-                                text = if (item.unpaidBillCount > 0) "${item.unpaidBillCount} unpaid bill(s)" else "All bills paid",
+                                text = when {
+                                    item.unpaidBillCount > 0 -> String.format(
+                                        Locale.US,
+                                        "%d unpaid bill%s · Bill Tk %,.0f",
+                                        item.unpaidBillCount,
+                                        if (item.unpaidBillCount == 1) "" else "s",
+                                        item.unpaidBillAmount
+                                    )
+                                    item.unpaidAmount > 0.0 -> "No unpaid bills · Unbilled outstanding"
+                                    else -> "All bills paid"
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

@@ -5,7 +5,9 @@ import com.finmagic.data.local.entity.Account
 import com.finmagic.data.local.entity.AccountTransaction
 import com.finmagic.data.local.entity.BillWithCard
 import com.finmagic.data.local.entity.CardTransaction
+import com.finmagic.data.sms.parsers.TxnCategory
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Calendar
@@ -177,11 +179,22 @@ class ChartsCalculatorTest {
         val now = ts(2026, Calendar.MARCH, 20)
 
         val txns = listOf(
-            // Feb 2026: income 40k, expense Food 1k
-            txn(1, 1L, AccountTransaction.DIRECTION_IN, 40_000.0, ts(2026, Calendar.FEBRUARY, 2), category = "Salary"),
+            // Feb 2026: marked income 40k, expense Food 1k
+            txn(
+                1, 1L, AccountTransaction.DIRECTION_IN, 40_000.0, ts(2026, Calendar.FEBRUARY, 2),
+                category = "Salary", isExpenseOverride = AccountTransaction.EXPENSE_INCLUDED
+            ),
             txn(2, 2L, AccountTransaction.DIRECTION_OUT, 1_000.0, ts(2026, Calendar.FEBRUARY, 8), category = "Food"),
-            // Mar 2026: income 50k, internal transfer 5k (should be excluded from income/expense), Food 2k + Card Shopping 3k
-            txn(3, 1L, AccountTransaction.DIRECTION_IN, 50_000.0, ts(2026, Calendar.MARCH, 1), category = "Salary"),
+            // Mar 2026: marked income 50k, unmarked bank credit 15k (must NOT count as income),
+            // internal transfer 5k (excluded from income/expense), Food 2k + Card Shopping 3k
+            txn(
+                3, 1L, AccountTransaction.DIRECTION_IN, 50_000.0, ts(2026, Calendar.MARCH, 1),
+                category = "Salary", isExpenseOverride = AccountTransaction.EXPENSE_INCLUDED
+            ),
+            txn(
+                7, 1L, AccountTransaction.DIRECTION_IN, 15_000.0, ts(2026, Calendar.MARCH, 2),
+                category = "Refund", isExpenseOverride = AccountTransaction.EXPENSE_AUTO
+            ),
             txn(4, 1L, AccountTransaction.DIRECTION_OUT, 5_000.0, ts(2026, Calendar.MARCH, 4), category = "Transfer", transferId = 99L),
             txn(5, 2L, AccountTransaction.DIRECTION_IN, 5_000.0, ts(2026, Calendar.MARCH, 4), category = "Transfer", transferId = 99L),
             txn(6, 2L, AccountTransaction.DIRECTION_OUT, 2_000.0, ts(2026, Calendar.MARCH, 10), category = "Food")
@@ -207,6 +220,21 @@ class ChartsCalculatorTest {
         assertEquals(1_000.0, monthlySeries[1].expense, 0.01)
         assertEquals(50_000.0, monthlySeries[2].income, 0.01)
         assertEquals(5_000.0, monthlySeries[2].expense, 0.01)
+
+        val incomeSlices = ChartsCalculator.buildCategoryBreakdown(
+            startMillis = ChartsCalculator.startOfMonth(2026, Calendar.MARCH),
+            endMillis = ChartsCalculator.endOfMonth(2026, Calendar.MARCH),
+            prevStartMillis = ChartsCalculator.startOfMonth(2026, Calendar.FEBRUARY),
+            prevEndMillis = ChartsCalculator.endOfMonth(2026, Calendar.FEBRUARY),
+            countedAccountIds = setOf(1L, 2L),
+            allAccountTxns = txns,
+            allCardTxns = cardTxns,
+            showIncome = true
+        )
+        assertEquals(1, incomeSlices.size)
+        assertEquals("Salary", incomeSlices[0].category)
+        assertEquals(50_000.0, incomeSlices[0].amount, 0.01)
+        assertEquals(40_000.0, incomeSlices[0].prevAmount, 0.01)
 
         val slices = ChartsCalculator.buildCategoryBreakdown(
             startMillis = ChartsCalculator.startOfMonth(2026, Calendar.MARCH),
@@ -241,6 +269,21 @@ class ChartsCalculatorTest {
         assertEquals(5_000.0, snapshotMar.expense, 0.01)
         assertEquals(45_000.0, snapshotMar.netCashflow, 0.01)
         assertTrue(snapshotMar.topCategories.isNotEmpty())
+    }
+
+    @Test
+    fun countsAsIncomeAndCountsAsExpense_doNotCollide() {
+        // Marked IN transaction must count as income and NEVER leak into expense
+        assertTrue(TxnCategory.countsAsIncome(AccountTransaction.EXPENSE_INCLUDED, AccountTransaction.DIRECTION_IN))
+        assertFalse(TxnCategory.countsAsExpense(AccountTransaction.EXPENSE_INCLUDED, AccountTransaction.DIRECTION_IN, "Salary"))
+
+        // Unmarked IN transaction counts as neither income nor expense
+        assertFalse(TxnCategory.countsAsIncome(AccountTransaction.EXPENSE_AUTO, AccountTransaction.DIRECTION_IN))
+        assertFalse(TxnCategory.countsAsExpense(AccountTransaction.EXPENSE_AUTO, AccountTransaction.DIRECTION_IN, "Salary"))
+
+        // OUT transaction with EXPENSE_INCLUDED counts as expense and NEVER as income
+        assertFalse(TxnCategory.countsAsIncome(AccountTransaction.EXPENSE_INCLUDED, AccountTransaction.DIRECTION_OUT))
+        assertTrue(TxnCategory.countsAsExpense(AccountTransaction.EXPENSE_INCLUDED, AccountTransaction.DIRECTION_OUT, "Food"))
     }
 
     @Test

@@ -36,11 +36,8 @@ data class BillWithCard(
         }
     }
 
-    private val _computedDueDate by lazy { computeDueDate() }
-    private val _computedDaysUntilDue by lazy { computeDaysUntilDue() }
-
     val daysUntilDue: Long
-        get() = _computedDaysUntilDue
+        get() = computeDaysUntilDue()
 
     val dueStatus: DueStatus
         get() = when {
@@ -52,7 +49,7 @@ data class BillWithCard(
         }
 
     val formattedDueDate: String
-        get() = _computedDueDate
+        get() = computeDueDate()
 
     private fun computeDueDate(): String {
         return try {

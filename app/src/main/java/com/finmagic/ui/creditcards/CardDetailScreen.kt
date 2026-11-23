@@ -56,6 +56,7 @@ fun CardDetailScreen(
     val billedTotals by viewModel.billedTotals.collectAsStateWithLifecycle()
     val paidTotals by viewModel.paidTotals.collectAsStateWithLifecycle()
     val unpaidTotals by viewModel.unpaidTotals.collectAsStateWithLifecycle()
+    val outstanding by viewModel.outstanding.collectAsStateWithLifecycle()
     val payments by viewModel.payments.collectAsStateWithLifecycle()
     val cardTransactions by viewModel.cardTransactions.collectAsStateWithLifecycle()
     val spentInPeriod by viewModel.spentInPeriod.collectAsStateWithLifecycle()
@@ -139,6 +140,7 @@ fun CardDetailScreen(
             item {
                 CardSummaryHeader(
                     card = card,
+                    outstanding = outstanding,
                     billedTotals = billedTotals,
                     paidTotals = paidTotals,
                     unpaidTotals = unpaidTotals,
@@ -277,9 +279,17 @@ fun CardDetailScreen(
     if (showEditDialog && card != null) {
         EditCardDialog(
             card = card!!,
+            currentOutstanding = outstanding,
             onDismiss = { showEditDialog = false },
-            onConfirm = { nickname, creditLimit, currency ->
-                viewModel.updateCardDetails(card!!, nickname, creditLimit, currency)
+            onConfirm = { nickname, creditLimit, currency, newOutstanding, clearAnchor ->
+                viewModel.updateCardDetails(
+                    card = card!!,
+                    nickname = nickname,
+                    creditLimit = creditLimit,
+                    currency = currency,
+                    newOutstanding = newOutstanding,
+                    clearOutstandingAnchor = clearAnchor
+                )
                 showEditDialog = false
             },
             onDeleteRequest = {
@@ -348,6 +358,7 @@ private fun formatCurrencies(totals: Map<String, Double>): String {
 @Composable
 private fun CardSummaryHeader(
     card: CreditCard?,
+    outstanding: Double,
     billedTotals: Map<String, Double>,
     paidTotals: Map<String, Double>,
     unpaidTotals: Map<String, Double>,
@@ -356,9 +367,10 @@ private fun CardSummaryHeader(
     totalBills: Int,
     periodLabel: String
 ) {
-    val totalUnpaid = unpaidTotals.values.sum()
+    val limitSym = card?.limitSymbol() ?: "৳"
+    val outstandingFormatted = "$limitSym${String.format(Locale.US, "%,.2f", outstanding)}"
     val utilization = if (card != null && card.creditLimit > 0) {
-        (totalUnpaid / card.creditLimit).coerceIn(0.0, 1.0)
+        (outstanding / card.creditLimit).coerceIn(0.0, 1.0)
     } else null
 
     Card(
@@ -376,15 +388,15 @@ private fun CardSummaryHeader(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Outstanding",
+                        text = if (card?.outstandingAnchor != null) "Outstanding (edited)" else "Outstanding",
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f)
                     )
                     Text(
-                        text = formatCurrencies(unpaidTotals),
-                        style = if (formatCurrencies(unpaidTotals).length > 14) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineLarge,
+                        text = outstandingFormatted,
+                        style = if (outstandingFormatted.length > 14) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineLarge,
                         fontWeight = FontWeight.Bold,
-                        color = if (totalUnpaid > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
+                        color = if (outstanding > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
 
@@ -406,6 +418,7 @@ private fun CardSummaryHeader(
 
             if (card != null && card.creditLimit > 0) {
                 val utilizationValue = utilization?.coerceIn(0.0, 1.0) ?: 0.0
+                val available = card.creditLimit - outstanding
                 Spacer(modifier = Modifier.height(10.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -445,8 +458,8 @@ private fun CardSummaryHeader(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = if (totalUnpaid > 0) {
-                                "${card.limitSymbol()}${String.format(Locale.US, "%,.2f", card.creditLimit - totalUnpaid)} available"
+                            text = if (outstanding > 0) {
+                                "${card.limitSymbol()}${String.format(Locale.US, "%,.2f", available)} available"
                             } else {
                                 "Full limit available"
                             },
@@ -469,13 +482,13 @@ private fun CardSummaryHeader(
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     Text(
-                        text = "Outstanding ${formatCurrencies(unpaidTotals)} • Spent ৳${String.format(Locale.US, "%,.2f", spentAmount)}",
+                        text = "Unpaid Bills ${formatCurrencies(unpaidTotals)} • Spent ৳${String.format(Locale.US, "%,.2f", spentAmount)}",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Text(
-                        text = "Bills ${formatCurrencies(billedTotals)} • Paid ${formatCurrencies(paidTotals)} ($periodLabel)",
+                        text = "Billed ${formatCurrencies(billedTotals)} • Paid ${formatCurrencies(paidTotals)} ($periodLabel)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                     )
@@ -841,13 +854,25 @@ private fun PaymentHistoryCard(
 @Composable
 fun EditCardDialog(
     card: CreditCard,
+    currentOutstanding: Double = 0.0,
     onDismiss: () -> Unit,
-    onConfirm: (nickname: String, creditLimit: Double, currency: String) -> Unit,
+    onConfirm: (
+        nickname: String,
+        creditLimit: Double,
+        currency: String,
+        newOutstanding: Double?,
+        clearOutstandingAnchor: Boolean
+    ) -> Unit,
     onDeleteRequest: () -> Unit
 ) {
     var nickname by remember(card.id) { mutableStateOf(card.cardNickname) }
     var limit by remember(card.id) { mutableStateOf(if (card.creditLimit > 0) card.creditLimit.toString() else "") }
     var currency by remember(card.id) { mutableStateOf(card.creditLimitCurrency) }
+    var outstandingText by remember(card.id, currentOutstanding) {
+        mutableStateOf(
+            if (currentOutstanding > 0.0) String.format(Locale.US, "%.2f", currentOutstanding) else "0"
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -855,7 +880,7 @@ fun EditCardDialog(
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 OutlinedTextField(
                     value = nickname,
@@ -863,16 +888,54 @@ fun EditCardDialog(
                     label = { Text("Card Nickname") },
                     singleLine = true,
                     placeholder = { Text("${card.bankName} •••• ${card.cardLast4}") },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("edit_card_nickname_input")
                 )
+
+                OutlinedTextField(
+                    value = outstandingText,
+                    onValueChange = { outstandingText = it },
+                    label = { Text("Current Outstanding (${card.limitSymbol()})") },
+                    supportingText = {
+                        Text(
+                            if (card.outstandingAnchor != null) {
+                                "Manual baseline active. Future card spend adds & payments subtract automatically."
+                            } else {
+                                "Auto-calculated from unpaid bills & recent card spend."
+                            }
+                        )
+                    },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("edit_card_outstanding_input")
+                )
+
+                if (card.outstandingAnchor != null) {
+                    TextButton(
+                        onClick = {
+                            val parsedLimit = limit.replace(",", "").toDoubleOrNull() ?: 0.0
+                            onConfirm(nickname, parsedLimit, currency, null, true)
+                        },
+                        modifier = Modifier
+                            .align(Alignment.Start)
+                            .testTag("edit_card_reset_outstanding")
+                    ) {
+                        Text("Reset outstanding to auto-calc")
+                    }
+                }
 
                 OutlinedTextField(
                     value = limit,
                     onValueChange = { limit = it },
                     label = { Text("Credit Limit") },
                     singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth()
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("edit_card_limit_input")
                 )
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -910,10 +973,22 @@ fun EditCardDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                val parsedLimit = limit.replace(",", "").toDoubleOrNull() ?: 0.0
-                onConfirm(nickname, parsedLimit, currency)
-            }) {
+            TextButton(
+                onClick = {
+                    val parsedLimit = limit.replace(",", "").toDoubleOrNull() ?: 0.0
+                    val parsedOutstanding = outstandingText.replace(",", "").toDoubleOrNull()
+                    val outstandingChanged = parsedOutstanding != null &&
+                        kotlin.math.abs(parsedOutstanding - currentOutstanding) > 0.005
+                    onConfirm(
+                        nickname,
+                        parsedLimit,
+                        currency,
+                        if (outstandingChanged) parsedOutstanding else null,
+                        false
+                    )
+                },
+                modifier = Modifier.testTag("edit_card_save_button")
+            ) {
                 Text("Save")
             }
         },

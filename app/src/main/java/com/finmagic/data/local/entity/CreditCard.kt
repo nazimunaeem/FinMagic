@@ -18,6 +18,8 @@ data class CreditCard(
     val isActive: Boolean = true,
     val creditLimit: Double = 0.0,
     val creditLimitCurrency: String = "BDT",
+    val outstandingAnchor: Double? = null,
+    val outstandingAnchorAt: Long = 0L,
     val createdAt: Long = System.currentTimeMillis()
 ) {
     val displayName: String

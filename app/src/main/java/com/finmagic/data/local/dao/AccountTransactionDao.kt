@@ -41,12 +41,12 @@ interface AccountTransactionDao {
                'account' AS source,
                counterparty AS accountLabel
         FROM account_transactions
-        WHERE (
-            (direction = 'OUT'
-             AND (category IS NULL OR category NOT IN (
+        WHERE direction = 'OUT'
+          AND (
+            ((category IS NULL OR category NOT IN (
                 'Fund-Transfer', 'ATM', 'Adjustment', 'NPSB', 'RD-Installment', 'DirectSet'))
-             AND isExpenseOverride != -1
-            ) OR isExpenseOverride = 1
+             AND isExpenseOverride != -1)
+            OR isExpenseOverride = 1
           )
           AND occurredAt BETWEEN :start AND :end
         ORDER BY occurredAt DESC, id DESC
@@ -83,6 +83,15 @@ interface AccountTransactionDao {
 
     @Query("SELECT * FROM account_transactions WHERE id = :id")
     suspend fun findByIdOnce(id: Long): AccountTransaction?
+
+    @Query("SELECT * FROM account_transactions ORDER BY occurredAt ASC, id ASC")
+    suspend fun getAllOnce(): List<AccountTransaction>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllReplace(txns: List<AccountTransaction>)
+
+    @Query("DELETE FROM account_transactions")
+    suspend fun clearAll()
 
     @Query(
         "SELECT balanceAfter FROM account_transactions " +
@@ -170,10 +179,10 @@ interface AccountTransactionDao {
                COALESCE((SELECT SUM(CASE WHEN direction = 'IN' THEN amount ELSE -amount END)
                 FROM account_transactions t WHERE t.accountId = a.id
                   ), 0) AS computedBalance,
-               COALESCE((SELECT SUM(CASE WHEN direction = 'IN' THEN amount ELSE 0 END)
+               COALESCE((SELECT SUM(CASE WHEN direction = 'IN' AND isExpenseOverride = 1 THEN amount ELSE 0 END)
                 FROM account_transactions t
                 WHERE t.accountId = a.id AND t.occurredAt >= :monthStart AND t.occurredAt < :monthEnd
-                  AND t.transferId IS NULL AND t.category != 'DirectSet'), 0) AS monthIn,
+                  AND t.category != 'DirectSet'), 0) AS monthIn,
                COALESCE((SELECT SUM(CASE WHEN direction = 'OUT' THEN amount ELSE 0 END)
                 FROM account_transactions t
                 WHERE t.accountId = a.id AND t.occurredAt >= :monthStart AND t.occurredAt < :monthEnd
@@ -209,7 +218,7 @@ interface AccountTransactionDao {
     """)
     fun observeMonthlyExpenseByCategory(monthStart: Long, monthEnd: Long): Flow<List<CategoryTotal>>
 
-    /** Monthly inflow per category (salary, received, credit); transfers excluded. */
+    /** Monthly inflow per category — only explicitly marked income rows (isExpenseOverride = 1). */
     @Query("""
         SELECT 
             CASE 
@@ -221,9 +230,8 @@ interface AccountTransactionDao {
         WHERE occurredAt >= :monthStart
           AND occurredAt < :monthEnd
           AND direction = 'IN'
-          AND transferId IS NULL
           AND category != 'DirectSet'
-          AND (isExpenseOverride IS NULL OR isExpenseOverride != -1)
+          AND isExpenseOverride = 1
         GROUP BY 
             CASE 
                 WHEN category LIKE 'Fund Transfer%' OR category LIKE 'Fund-Transfer%' THEN 'Fund Transfer'

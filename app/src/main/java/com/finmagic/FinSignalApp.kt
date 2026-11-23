@@ -5,7 +5,15 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import com.finmagic.data.backup.BackupManager
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -13,6 +21,11 @@ class FinMagicApp : Application(), Configuration.Provider {
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
+
+    @Inject
+    lateinit var backupManager: BackupManager
+
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -26,6 +39,20 @@ class FinMagicApp : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
+        startAutoBackupObserver()
+    }
+
+    @OptIn(FlowPreview::class)
+    private fun startAutoBackupObserver() {
+        if (!::backupManager.isInitialized) return
+        appScope.launch {
+            backupManager.observeAutoBackupTriggers()
+                .drop(1)
+                .debounce(4_000L)
+                .collect {
+                    runCatching { backupManager.writeToPersistentFile() }
+                }
+        }
     }
 
     private fun createNotificationChannels() {

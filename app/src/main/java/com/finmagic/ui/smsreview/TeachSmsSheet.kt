@@ -60,6 +60,24 @@ internal fun suggestTeachAction(body: String): TeachAction {
     }
 }
 
+internal fun suggestRuleKeywords(body: String, action: TeachAction): String {
+    val text = body.lowercase(Locale.US)
+    val candidates = when (action) {
+        TeachAction.CREDIT -> listOf("credited", "received", "deposited", "top-up", "added")
+        TeachAction.DEBIT -> listOf("debited", "spent", "purchase", "charged", "withdrawn", "payment")
+        TeachAction.ATM -> listOf("atm", "cash withdrawal", "withdrawn")
+        TeachAction.TRANSFER -> listOf("transferred", "fund transfer", "transfer")
+        TeachAction.BALANCE_ONLY -> listOf("available balance", "current balance", "balance")
+        TeachAction.BILL -> listOf("total due", "statement", "bill")
+        TeachAction.BILL_PAID -> listOf("payment", "paid", "settled")
+        TeachAction.IGNORE -> emptyList()
+    }
+    val matched = candidates.firstOrNull { kw ->
+        Regex("""\b${Regex.escape(kw)}\b""").containsMatchIn(text)
+    }
+    return matched.orEmpty()
+}
+
 private data class ActionInsight(
     val confidence: String,
     val reasons: List<String>
@@ -209,12 +227,21 @@ fun TeachSmsSheet(
     var selectedDate by remember(record.id) { mutableStateOf(extracted.date ?: record.timestamp) }
     var counterparty by remember(record.id) { mutableStateOf(extracted.counterparty.orEmpty()) }
     var category by remember(record.id) { mutableStateOf("") }
-    var saveRule by remember(record.id) { mutableStateOf(false) }
-    var requiredKeywords by remember(record.id) { mutableStateOf("") }
+    var saveRule by remember(record.id) { mutableStateOf(!record.isParsed) }
+    var keywordsManuallyEdited by remember(record.id) { mutableStateOf(false) }
+    var requiredKeywords by remember(record.id) {
+        mutableStateOf(suggestRuleKeywords(record.body, selectedAction))
+    }
     var excludedKeywords by remember(record.id) { mutableStateOf("") }
     var showDatePicker by remember(record.id) { mutableStateOf(false) }
     var showCreateAccount by remember(record.id) { mutableStateOf(false) }
     var showBlockSenderConfirm by remember(record.id) { mutableStateOf(false) }
+
+    LaunchedEffect(selectedAction) {
+        if (!keywordsManuallyEdited) {
+            requiredKeywords = suggestRuleKeywords(record.body, selectedAction)
+        }
+    }
 
     LaunchedEffect(accounts, creditCards, selectedAction) {
         if ((selectedAction == TeachAction.BILL || selectedAction == TeachAction.BILL_PAID) && selectedCardId == null) {
@@ -728,22 +755,31 @@ fun TeachSmsSheet(
                 )
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = saveRule, onCheckedChange = { saveRule = it })
-                Text("Save rule for future SMS")
+                Checkbox(
+                    checked = saveRule,
+                    onCheckedChange = { saveRule = it },
+                    modifier = Modifier.testTag("teach_sms_save_rule_checkbox")
+                )
+                Text("Learn rule for past & future SMS")
             }
 
             if (saveRule) {
                 Text(
-                    "Keywords help match future SMS from this sender. Leave empty to match all messages from ${record.address ?: "this sender"}.",
+                    "Keywords help distinguish credit vs. debit SMS from this sender. Leave empty to match all messages from ${record.address ?: "this sender"}.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 OutlinedTextField(
                     value = requiredKeywords,
-                    onValueChange = { requiredKeywords = it },
+                    onValueChange = {
+                        keywordsManuallyEdited = true
+                        requiredKeywords = it
+                    },
                     label = { Text("Required keywords (comma separated)") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("teach_sms_required_keywords_input")
                 )
                 OutlinedTextField(
                     value = excludedKeywords,

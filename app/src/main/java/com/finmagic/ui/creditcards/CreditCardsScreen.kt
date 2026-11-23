@@ -78,6 +78,8 @@ fun CreditCardsScreen(
         selectedTab = initialTab
     }
     var showAddCardDialog by remember { mutableStateOf(false) }
+    var editingCardStats by remember { mutableStateOf<CardWithStats?>(null) }
+    var deletingCard by remember { mutableStateOf<com.finmagic.data.local.entity.CreditCard?>(null) }
     var heroPayBill by remember { mutableStateOf<BillWithCard?>(null) }
 
     var hasSmsPermission by remember {
@@ -440,6 +442,7 @@ fun CreditCardsScreen(
                                             state.selectedMonth
                                         ),
                                         onClick = { onCardClick(cardWithStats.card.id) },
+                                        onEditClick = { editingCardStats = cardWithStats },
                                         onPayBill = cardWithStats.nextUnpaidBill?.let { bill ->
                                             { heroPayBill = bill }
                                         }
@@ -460,6 +463,54 @@ fun CreditCardsScreen(
             onConfirm = { bankName, last4, nickname, creditLimit, currency ->
                 viewModel.addManualCard(bankName, last4, nickname, creditLimit, currency)
                 showAddCardDialog = false
+            }
+        )
+    }
+
+    if (editingCardStats != null) {
+        val targetStats = editingCardStats!!
+        EditCardDialog(
+            card = targetStats.card,
+            currentOutstanding = targetStats.outstandingAmount,
+            onDismiss = { editingCardStats = null },
+            onConfirm = { nickname, creditLimit, currency, newOutstanding, clearAnchor ->
+                viewModel.updateCardDetails(
+                    card = targetStats.card,
+                    nickname = nickname,
+                    creditLimit = creditLimit,
+                    currency = currency,
+                    newOutstanding = newOutstanding,
+                    clearOutstandingAnchor = clearAnchor
+                )
+                editingCardStats = null
+            },
+            onDeleteRequest = {
+                editingCardStats = null
+                deletingCard = targetStats.card
+            }
+        )
+    }
+
+    if (deletingCard != null) {
+        val targetCard = deletingCard!!
+        AlertDialog(
+            onDismissRequest = { deletingCard = null },
+            title = { Text("Delete Card") },
+            text = { Text("Are you sure you want to delete ${targetCard.displayName}?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteCard(targetCard)
+                        deletingCard = null
+                    }
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingCard = null }) {
+                    Text("Cancel")
+                }
             }
         )
     }
@@ -695,11 +746,13 @@ private fun CardItem(
     stats: CardWithStats,
     periodLabel: String,
     onClick: () -> Unit,
+    onEditClick: () -> Unit,
     onPayBill: (() -> Unit)? = null
 ) {
     val card = stats.card
+    val outstanding = stats.outstandingAmount
     val utilization = if (card.creditLimit > 0) {
-        (stats.totalUnpaid / card.creditLimit).coerceIn(0.0, 1.0)
+        (outstanding / card.creditLimit).coerceIn(0.0, 1.0)
     } else null
 
     Card(
@@ -760,6 +813,19 @@ private fun CardItem(
                         modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
                     )
                 }
+                IconButton(
+                    onClick = onEditClick,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("card_edit_${card.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Edit card & outstanding",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
 
             if (utilization != null) {
@@ -798,14 +864,19 @@ private fun CardItem(
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     Text(
-                        text = "Outstanding ${formatCurrencyMap(stats.unpaidByCurrency)} • Spent ৳${String.format(Locale.US, "%,.2f", stats.spentAmount)}",
+                        text = "Outstanding ${card.limitSymbol()}${String.format(Locale.US, "%,.2f", outstanding)} • Spent ৳${String.format(Locale.US, "%,.2f", stats.spentAmount)}",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = if (stats.totalUnpaid > 0) MaterialTheme.colorScheme.error
+                        color = if (outstanding > 0) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    val billSummary = if (stats.unpaidByCurrency.isNotEmpty()) {
+                        "Bill due ${formatCurrencyMap(stats.unpaidByCurrency)}"
+                    } else {
+                        "Billed ${formatCurrencyMap(stats.billedByCurrency)}"
+                    }
                     Text(
-                        text = "Bill ${formatCurrencyMap(stats.billedByCurrency)} • Paid ${formatCurrencyMap(stats.paidByCurrency)} ($periodLabel)",
+                        text = "$billSummary • Paid ${formatCurrencyMap(stats.paidByCurrency)} ($periodLabel)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -815,9 +886,9 @@ private fun CardItem(
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
                         text = if (stats.unpaidBillCount > 0) {
-                            "${stats.unpaidBillCount} unpaid"
+                            "${stats.unpaidBillCount} unpaid bill${if (stats.unpaidBillCount == 1) "" else "s"}"
                         } else {
-                            "All paid"
+                            "All bills paid"
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,

@@ -284,4 +284,25 @@ class SmsTeachingEngineTest {
         val result = findMatch(listOf(rule), null, "Tk 100 debited from account")
         assertNotNull(result)
     }
+
+    @Test
+    fun matchesRule_matchesAllOlderAndNewerHistoricalSmsOfSamePattern() {
+        val rule = makeRule(
+            id = 42L,
+            senderKey = "BRAC",
+            requiredKeywords = """["debited","A/C"]""",
+            action = SmsTeachingRule.ACTION_DEBIT
+        )
+        val historicalSms = listOf(
+            "Tk 1,200.00 debited from A/C ***5678 on 01/02/2026",
+            "Tk 3,450.50 debited from A/C ***5678 on 14/02/2026",
+            "Your OTP 991234 for BRAC netbanking"
+        )
+        val matched = historicalSms.filter { body ->
+            SmsTeachingEngine.matchesRule(rule, "BRACBANK", SmsTeachingEngine.normalizeText(body))
+        }
+        assertEquals(2, matched.size)
+        assertEquals(1200.00, SmsTeachingEngine.extractAmount(matched[0])!!, 0.01)
+        assertEquals(3450.50, SmsTeachingEngine.extractAmount(matched[1])!!, 0.01)
+    }
 }

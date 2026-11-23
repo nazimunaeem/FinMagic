@@ -37,7 +37,11 @@ object TxnCategory {
 
     /** Does this row currently appear in the Expenses tab (override-aware)? */
     fun countsAsExpense(override: Int, direction: String?, category: String?): Boolean =
-        override == 1 || (override != -1 && isAutoExpense(direction, category))
+        direction == "OUT" && (override == 1 || (override != -1 && isAutoExpense(direction, category)))
+
+    /** Does this row count as marked Income in Charts and Monthly Stats? */
+    fun countsAsIncome(override: Int, direction: String?): Boolean =
+        direction == "IN" && override == 1
 
     /** Target override value when the user toggles the Expense checkbox to [include]. */
     fun targetOverride(include: Boolean, direction: String?, category: String?): Int =

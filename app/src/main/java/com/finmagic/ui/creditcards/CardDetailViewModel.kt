@@ -22,7 +22,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Calendar
-import java.util.UUID
 import javax.inject.Inject
 
 @HiltViewModel
@@ -71,8 +70,8 @@ class CardDetailViewModel @Inject constructor(
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
-    private val _card = MutableStateFlow<CreditCard?>(null)
-    val card: StateFlow<CreditCard?> = _card.asStateFlow()
+    val card: StateFlow<CreditCard?> = cardRepository.observeCardById(cardId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     private val _bills: StateFlow<List<BillWithCard>> = billRepository.getBillsForCard(cardId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -109,7 +108,7 @@ class CardDetailViewModel @Inject constructor(
 
     val cardTransactions: StateFlow<List<CardTransaction>> = combine(
         cardTransactionDao.observeAll(),
-        _card,
+        card,
         _periodMode,
         _selectedPeriod
     ) { allTxns, currentCard, mode, (y, m) ->
@@ -125,7 +124,7 @@ class CardDetailViewModel @Inject constructor(
 
     val payments: StateFlow<List<CardPayment>> = combine(
         cardPaymentDao.observeAllPayments(),
-        _card
+        card
     ) { allPayments, currentCard ->
         if (currentCard == null) emptyList()
         else {
@@ -136,9 +135,20 @@ class CardDetailViewModel @Inject constructor(
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    init {
-        loadCard()
-    }
+    val outstanding: StateFlow<Double> = combine(
+        card,
+        _bills,
+        cardTransactionDao.observeAll(),
+        cardPaymentDao.observeAllPayments()
+    ) { currentCard, bills, allTxns, allPayments ->
+        if (currentCard == null) 0.0
+        else CardRepository.computeCardOutstanding(
+            card = currentCard,
+            cardBills = bills,
+            allCardTxns = allTxns,
+            allPayments = allPayments
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     fun setPeriodMode(mode: CardPeriodMode) {
         _periodMode.value = mode
@@ -177,16 +187,9 @@ class CardDetailViewModel @Inject constructor(
         }
     }
 
-    private fun loadCard() {
-        viewModelScope.launch {
-            _card.value = cardRepository.getCardById(cardId)
-        }
-    }
-
     fun updateNickname(card: CreditCard, nickname: String) {
         viewModelScope.launch {
             cardRepository.updateCard(card.copy(cardNickname = nickname.trim()))
-            _card.value = cardRepository.getCardById(cardId)
         }
     }
 
@@ -194,17 +197,19 @@ class CardDetailViewModel @Inject constructor(
         card: CreditCard,
         nickname: String,
         creditLimit: Double,
-        currency: String
+        currency: String,
+        newOutstanding: Double? = null,
+        clearOutstandingAnchor: Boolean = false
     ) {
         viewModelScope.launch {
-            cardRepository.updateCard(
-                card.copy(
-                    cardNickname = nickname.trim(),
-                    creditLimit = creditLimit,
-                    creditLimitCurrency = currency.ifBlank { "BDT" }
-                )
+            cardRepository.updateCardDetails(
+                card = card,
+                nickname = nickname,
+                creditLimit = creditLimit,
+                currency = currency,
+                newOutstanding = newOutstanding,
+                clearOutstandingAnchor = clearOutstandingAnchor
             )
-            _card.value = cardRepository.getCardById(cardId)
         }
     }
 
@@ -238,27 +243,23 @@ class CardDetailViewModel @Inject constructor(
         occurredAt: Long,
         category: String?
     ) {
-        val currentCard = _card.value ?: return
+        val currentCard = card.value ?: return
         val trimmedMerchant = merchant.trim()
         if (trimmedMerchant.isEmpty() || amount <= 0.0) return
         viewModelScope.launch {
-            cardTransactionDao.insert(
-                CardTransaction(
-                    cardTail = currentCard.cardLast4,
-                    bankName = currentCard.bankName,
-                    merchant = trimmedMerchant,
-                    amount = amount,
-                    occurredAt = occurredAt,
-                    category = category?.trim()?.ifBlank { null },
-                    smsBody = "manual:${UUID.randomUUID()}"
-                )
+            cardRepository.recordManualCardSpend(
+                card = currentCard,
+                merchant = trimmedMerchant,
+                amount = amount,
+                occurredAt = occurredAt,
+                category = category
             )
         }
     }
 
     fun deleteManualTransaction(txnId: Long) {
         viewModelScope.launch {
-            cardTransactionDao.deleteManualById(txnId)
+            cardRepository.deleteCardSpend(txnId, manualOnly = true)
         }
     }
 }

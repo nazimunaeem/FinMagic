@@ -5,6 +5,7 @@ import com.finmagic.data.local.dao.CardTransactionDao
 import com.finmagic.data.local.dao.CreditCardDao
 import com.finmagic.data.local.dao.SmsRuleApplicationDao
 import com.finmagic.data.local.dao.SmsTeachingRuleDao
+import com.finmagic.data.local.entity.Bill
 import com.finmagic.data.local.entity.CardPayment
 import com.finmagic.data.local.entity.CardTransaction
 import com.finmagic.data.local.entity.SmsRecord
@@ -12,9 +13,13 @@ import com.finmagic.data.local.entity.SmsRuleApplication
 import com.finmagic.data.local.entity.SmsTeachingRule
 import com.finmagic.data.local.entity.AccountTransaction
 import com.finmagic.data.repository.AccountRepository
+import com.finmagic.data.repository.BillRepository
 import com.finmagic.data.sms.parsers.LedgerDirection
 import com.finmagic.data.sms.parsers.LedgerEntry
 import com.finmagic.data.sms.parsers.AccountKind
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -52,6 +57,7 @@ class SmsTeachingEngine @Inject constructor(
     private val ruleDao: SmsTeachingRuleDao,
     private val ruleApplicationDao: SmsRuleApplicationDao,
     private val accountRepository: AccountRepository,
+    private val billRepository: BillRepository,
     private val creditCardDao: CreditCardDao,
     private val cardTransactionDao: CardTransactionDao,
     private val cardPaymentDao: CardPaymentDao
@@ -85,22 +91,29 @@ class SmsTeachingEngine @Inject constructor(
      * Applies a specific [rule] to all matching unparsed [unparsedRecords].
      * Returns the list of SMS record IDs that were successfully processed and applied.
      */
-    suspend fun applyRuleToHistorical(rule: SmsTeachingRule, unparsedRecords: List<SmsRecord>): List<Long> {
+    suspend fun applyRuleToHistorical(
+        rule: SmsTeachingRule,
+        unparsedRecords: List<SmsRecord>,
+        excludeRecordId: Long? = null
+    ): List<Long> {
         val appliedIds = mutableListOf<Long>()
         for (record in unparsedRecords) {
+            if (excludeRecordId != null && record.id == excludeRecordId) continue
             val normalizedBody = normalizeText(record.body)
             val sender = record.address?.trim()?.uppercase()
             if (matchesRule(rule, sender, normalizedBody)) {
                 val (applied, txnId) = applyRule(rule, record)
                 if (applied) {
-                    ruleDao.incrementMatchCount(rule.id)
-                    ruleApplicationDao.insert(
-                        SmsRuleApplication(
-                            ruleId = rule.id,
-                            smsRecordId = record.id,
-                            transactionId = txnId
+                    if (rule.id > 0L) {
+                        ruleDao.incrementMatchCount(rule.id)
+                        ruleApplicationDao.insert(
+                            SmsRuleApplication(
+                                ruleId = rule.id,
+                                smsRecordId = record.id,
+                                transactionId = txnId
+                            )
                         )
-                    )
+                    }
                     appliedIds.add(record.id)
                 }
             }
@@ -186,10 +199,13 @@ class SmsTeachingEngine @Inject constructor(
 
             SmsTeachingRule.ACTION_ATM_WITHDRAWAL -> {
                 val amount = extracted.amount ?: return false to null
+                val targetAccountId = resolveRuleAccountId(rule)
+                val acct = if (targetAccountId > 0L) accountRepository.getAccountOnce(targetAccountId) else null
+                val acctKind = runCatching { AccountKind.valueOf(acct?.kind ?: "") }.getOrElse { AccountKind.BANK }
                 val entry = LedgerEntry(
-                    institution = "",
-                    kind = AccountKind.BANK,
-                    accountMask = "",
+                    institution = acct?.bankName.orEmpty(),
+                    kind = acctKind,
+                    accountMask = acct?.accountMask.orEmpty(),
                     direction = LedgerDirection.OUT,
                     amount = amount,
                     occurredAt = extracted.date ?: record.timestamp,
@@ -201,10 +217,13 @@ class SmsTeachingEngine @Inject constructor(
 
             SmsTeachingRule.ACTION_TRANSFER -> {
                 val amount = extracted.amount ?: return false to null
+                val targetAccountId = resolveRuleAccountId(rule)
+                val acct = if (targetAccountId > 0L) accountRepository.getAccountOnce(targetAccountId) else null
+                val acctKind = runCatching { AccountKind.valueOf(acct?.kind ?: "") }.getOrElse { AccountKind.BANK }
                 val fromEntry = LedgerEntry(
-                    institution = "",
-                    kind = AccountKind.BANK,
-                    accountMask = "",
+                    institution = acct?.bankName.orEmpty(),
+                    kind = acctKind,
+                    accountMask = acct?.accountMask.orEmpty(),
                     direction = LedgerDirection.OUT,
                     amount = amount,
                     occurredAt = extracted.date ?: record.timestamp,
@@ -247,12 +266,57 @@ class SmsTeachingEngine @Inject constructor(
                 val amount = extracted.amount ?: return false to null
                 val cardId = rule.cardId ?: return false to null
                 val card = creditCardDao.getCardById(cardId) ?: return false to null
+                cardPaymentDao.deleteBySmsBody(record.body)
                 val insertedId = cardPaymentDao.insert(
                     CardPayment(
                         cardTail = card.cardLast4,
                         amountBdt = amount,
                         amountUsd = 0.0,
                         paidAt = extracted.date ?: record.timestamp,
+                        smsBody = record.body
+                    )
+                )
+                (insertedId > 0L) to (if (insertedId > 0L) insertedId else null)
+            }
+
+            SmsTeachingRule.ACTION_BILL -> {
+                val amount = extracted.amount ?: return false to null
+                val cardId = rule.cardId ?: return false to null
+                creditCardDao.getCardById(cardId) ?: return false to null
+                val whenMs = extracted.date ?: record.timestamp
+                val dueDateStr = SimpleDateFormat("dd/MM/yyyy", Locale.US).format(Date(whenMs))
+                val periodStr = SimpleDateFormat("MMMM yyyy", Locale.US).format(Date(whenMs))
+                val billId = billRepository.addBill(
+                    Bill(
+                        cardId = cardId,
+                        billPeriod = periodStr,
+                        totalDue = amount,
+                        minDue = amount,
+                        dueDate = dueDateStr,
+                        smsBody = record.body,
+                        currency = "BDT",
+                        detectedAt = record.timestamp
+                    )
+                )
+                (billId > 0L) to (if (billId > 0L) billId else null)
+            }
+
+            SmsTeachingRule.ACTION_BILL_PAID -> {
+                val amount = extracted.amount ?: return false to null
+                val cardId = rule.cardId ?: return false to null
+                val card = creditCardDao.getCardById(cardId) ?: return false to null
+                val whenMs = extracted.date ?: record.timestamp
+                val unpaid = billRepository.findActiveUnpaidBill(cardId, "BDT")
+                if (unpaid != null) {
+                    billRepository.markAsPaid(unpaid.id, whenMs)
+                }
+                cardPaymentDao.deleteBySmsBody(record.body)
+                val insertedId = cardPaymentDao.insert(
+                    CardPayment(
+                        cardTail = card.cardLast4,
+                        amountBdt = amount,
+                        amountUsd = 0.0,
+                        paidAt = whenMs,
                         smsBody = record.body
                     )
                 )

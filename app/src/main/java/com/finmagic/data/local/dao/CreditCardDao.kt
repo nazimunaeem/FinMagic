@@ -42,4 +42,10 @@ interface CreditCardDao {
 
     @Query("UPDATE credit_cards SET isActive = 0 WHERE id = :cardId")
     suspend fun deactivateCard(cardId: Long)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllReplace(cards: List<CreditCard>)
+
+    @Query("DELETE FROM credit_cards")
+    suspend fun clearAll()
 }

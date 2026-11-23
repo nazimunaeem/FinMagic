@@ -21,4 +21,13 @@ interface TransferDao {
     /** All transfers touching an account — needed to clean both sides on delete. */
     @Query("SELECT * FROM transfers WHERE fromAccountId = :accountId OR toAccountId = :accountId")
     suspend fun getForAccountOnce(accountId: Long): List<Transfer>
+
+    @Query("SELECT * FROM transfers ORDER BY occurredAt ASC, id ASC")
+    suspend fun getAllOnce(): List<Transfer>
+
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun insertAllReplace(transfers: List<Transfer>)
+
+    @Query("DELETE FROM transfers")
+    suspend fun clearAll()
 }

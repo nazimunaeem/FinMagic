@@ -8,11 +8,15 @@ import com.finmagic.data.local.PreferenceManager
 import com.finmagic.data.local.dao.AccountDao
 import com.finmagic.data.local.dao.AccountTransactionDao
 import com.finmagic.data.local.dao.BillDao
+import com.finmagic.data.local.dao.CardPaymentDao
 import com.finmagic.data.local.dao.CardTransactionDao
+import com.finmagic.data.local.dao.CreditCardDao
 import com.finmagic.data.local.entity.Account
 import com.finmagic.data.local.entity.AccountTransaction
 import com.finmagic.data.local.entity.BillWithCard
+import com.finmagic.data.local.entity.CardPayment
 import com.finmagic.data.local.entity.CardTransaction
+import com.finmagic.data.local.entity.CreditCard
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -63,6 +67,8 @@ class ChartsViewModel @Inject constructor(
     accountTxnDao: AccountTransactionDao,
     billDao: BillDao,
     cardTxnDao: CardTransactionDao,
+    creditCardDao: CreditCardDao,
+    cardPaymentDao: CardPaymentDao,
     preferenceManager: PreferenceManager
 ) : AndroidViewModel(application) {
 
@@ -86,7 +92,9 @@ class ChartsViewModel @Inject constructor(
         val bills: List<BillWithCard>,
         val cardTxns: List<CardTransaction>,
         val accountTypes: List<AccountTypeConfig>,
-        val nicknames: Map<String, String>
+        val nicknames: Map<String, String>,
+        val cards: List<CreditCard> = emptyList(),
+        val cardPayments: List<CardPayment> = emptyList()
     )
 
     private data class SelectionState(
@@ -110,6 +118,10 @@ class ChartsViewModel @Inject constructor(
         DbSnapshot(accounts, accountTxns, bills, cardTxns, types, emptyMap())
     }.combine(preferenceManager.categoryNicknames) { snapshot, nicknames ->
         snapshot.copy(nicknames = nicknames)
+    }.combine(
+        combine(creditCardDao.getAllCards(), cardPaymentDao.observeAllPayments()) { c, p -> c to p }
+    ) { snapshot, (cards, payments) ->
+        snapshot.copy(cards = cards, cardPayments = payments)
     }
 
     private val mainControlsFlow = combine(
@@ -147,13 +159,16 @@ class ChartsViewModel @Inject constructor(
 
         val primarySeries = when (sel.granularity) {
             ChartGranularity.DAILY -> ChartsCalculator.buildDailyNetAssetSeries(
-                sel.year, sel.month, db.accounts, txnsByAccount, db.bills, nowMillis
+                sel.year, sel.month, db.accounts, txnsByAccount, db.bills, nowMillis,
+                db.cards, db.cardTxns, db.cardPayments
             )
             ChartGranularity.MONTHLY -> ChartsCalculator.buildMonthlyNetAssetSeries(
-                sel.year, db.accounts, txnsByAccount, db.bills, nowMillis
+                sel.year, db.accounts, txnsByAccount, db.bills, nowMillis,
+                db.cards, db.cardTxns, db.cardPayments
             )
             ChartGranularity.YEARLY -> ChartsCalculator.buildYearlyNetAssetSeries(
-                db.accounts, txnsByAccount, db.bills, nowMillis
+                db.accounts, txnsByAccount, db.bills, nowMillis,
+                db.cards, db.cardTxns, db.cardPayments
             )
         }
 
@@ -162,10 +177,12 @@ class ChartsViewModel @Inject constructor(
             emptyList()
         } else when (sel.granularity) {
             ChartGranularity.DAILY -> ChartsCalculator.buildDailyNetAssetSeries(
-                prevY, prevM, db.accounts, txnsByAccount, db.bills, nowMillis
+                prevY, prevM, db.accounts, txnsByAccount, db.bills, nowMillis,
+                db.cards, db.cardTxns, db.cardPayments
             )
             ChartGranularity.MONTHLY -> ChartsCalculator.buildMonthlyNetAssetSeries(
-                sel.year - 1, db.accounts, txnsByAccount, db.bills, nowMillis
+                sel.year - 1, db.accounts, txnsByAccount, db.bills, nowMillis,
+                db.cards, db.cardTxns, db.cardPayments
             )
             ChartGranularity.YEARLY -> emptyList()
         }
@@ -193,7 +210,8 @@ class ChartsViewModel @Inject constructor(
         }
 
         val (liveNet, liveAssets, liveLiabilities) = ChartsCalculator.computeNetAssetAt(
-            nowMillis, db.accounts, txnsByAccount, db.bills, nowMillis
+            nowMillis, db.accounts, txnsByAccount, db.bills, nowMillis,
+            db.cards, db.cardTxns, db.cardPayments
         )
         val displayPoint = primarySeries.lastOrNull()
         val headlineNet = displayPoint?.netAsset ?: liveNet
@@ -203,11 +221,17 @@ class ChartsViewModel @Inject constructor(
         val previousAnchorNet = when (sel.granularity) {
             ChartGranularity.DAILY -> {
                 val endPrevMonth = ChartsCalculator.endOfMonth(prevY, prevM)
-                ChartsCalculator.computeNetAssetAt(endPrevMonth, db.accounts, txnsByAccount, db.bills, nowMillis).first
+                ChartsCalculator.computeNetAssetAt(
+                    endPrevMonth, db.accounts, txnsByAccount, db.bills, nowMillis,
+                    db.cards, db.cardTxns, db.cardPayments
+                ).first
             }
             ChartGranularity.MONTHLY -> {
                 val endPrevYear = ChartsCalculator.endOfYear(sel.year - 1)
-                ChartsCalculator.computeNetAssetAt(endPrevYear, db.accounts, txnsByAccount, db.bills, nowMillis).first
+                ChartsCalculator.computeNetAssetAt(
+                    endPrevYear, db.accounts, txnsByAccount, db.bills, nowMillis,
+                    db.cards, db.cardTxns, db.cardPayments
+                ).first
             }
             ChartGranularity.YEARLY -> {
                 if (primarySeries.size >= 2) primarySeries[primarySeries.size - 2].netAsset else 0.0
@@ -266,7 +290,10 @@ class ChartsViewModel @Inject constructor(
             accounts = db.accounts,
             txnsByAccount = txnsByAccount,
             bills = db.bills,
-            accountTypes = db.accountTypes
+            accountTypes = db.accountTypes,
+            cards = db.cards,
+            cardTxns = db.cardTxns,
+            cardPayments = db.cardPayments
         )
 
         val earliestMillis = listOfNotNull(
@@ -287,7 +314,9 @@ class ChartsViewModel @Inject constructor(
             bills = db.bills,
             allAccountTxns = db.accountTxns,
             allCardTxns = db.cardTxns,
-            nowMillis = nowMillis
+            nowMillis = nowMillis,
+            cards = db.cards,
+            cardPayments = db.cardPayments
         )
         val snapshotB = ChartsCalculator.buildPeriodSnapshot(
             isYearly = sel.compareYearlyMode,
@@ -298,7 +327,9 @@ class ChartsViewModel @Inject constructor(
             bills = db.bills,
             allAccountTxns = db.accountTxns,
             allCardTxns = db.cardTxns,
-            nowMillis = nowMillis
+            nowMillis = nowMillis,
+            cards = db.cards,
+            cardPayments = db.cardPayments
         )
 
         ChartsUiState(

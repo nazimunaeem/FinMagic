@@ -21,6 +21,9 @@ interface SmsRecordDao {
     @Query("SELECT * FROM sms_records WHERE isParsed = 0 ORDER BY timestamp DESC")
     fun getUnparsedSms(): Flow<List<SmsRecord>>
 
+    @Query("SELECT * FROM sms_records WHERE isParsed = 0 ORDER BY timestamp DESC")
+    suspend fun getUnparsedSmsOnce(): List<SmsRecord>
+
     @Query("SELECT COUNT(*) FROM sms_records")
     fun getSmsCount(): Flow<Int>
 
@@ -42,6 +45,12 @@ interface SmsRecordDao {
 
     @Query("DELETE FROM sms_records WHERE id NOT IN (SELECT MIN(id) FROM sms_records GROUP BY body)")
     suspend fun deleteDuplicateSmsRecords()
+
+    @Query("SELECT * FROM sms_records ORDER BY id ASC")
+    suspend fun getAllOnce(): List<SmsRecord>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllReplace(records: List<SmsRecord>)
 
     @Query("DELETE FROM sms_records")
     suspend fun clearAll()

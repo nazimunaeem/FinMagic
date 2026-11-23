@@ -295,7 +295,8 @@ class AccountRepository @Inject constructor(
         counterparty: String?,
         smsBody: String,
         smsRecordId: Long?,
-        balanceAfter: Double? = null
+        balanceAfter: Double? = null,
+        isExpenseOverride: Int = AccountTransaction.EXPENSE_AUTO
     ): Long? {
         if (amount <= 0.0 || txnDao.existsBySmsBody(smsBody)) return null
         accountDao.findByIdOnce(accountId) ?: return null
@@ -311,7 +312,8 @@ class AccountRepository @Inject constructor(
                     counterparty = counterparty,
                     smsRecordId = smsRecordId,
                     smsBody = smsBody,
-                    isManual = true
+                    isManual = true,
+                    isExpenseOverride = isExpenseOverride
                 )
             )
         }
@@ -490,6 +492,11 @@ class AccountRepository @Inject constructor(
     ): Boolean {
         if (amount <= 0.0) return false
         val cash = ensureCashAccount()
+        val initialOverride = if (direction == AccountTransaction.DIRECTION_IN) {
+            AccountTransaction.EXPENSE_INCLUDED
+        } else {
+            AccountTransaction.EXPENSE_AUTO
+        }
         database.withTransaction {
             txnDao.insert(
                 AccountTransaction(
@@ -499,7 +506,8 @@ class AccountRepository @Inject constructor(
                     occurredAt = occurredAt,
                     category = category ?: com.finmagic.data.sms.parsers.TxnCategory.MANUAL,
                     counterparty = counterparty,
-                    isManual = true
+                    isManual = true,
+                    isExpenseOverride = initialOverride
                 )
             )
         }

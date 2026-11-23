@@ -363,9 +363,14 @@ fun AccountDetailScreen(
                 )
                 selectedTxn = null
             },
-            alreadyIncome = false,
+            alreadyIncome = com.finmagic.data.sms.parsers.TxnCategory.countsAsIncome(
+                txn.isExpenseOverride, txn.direction
+            ),
             onSetIncome = { include ->
-                viewModel.setExpenseOverride(txn.id, if (include) 0 else -1)
+                viewModel.setExpenseOverride(
+                    txn.id,
+                    if (include) AccountTransaction.EXPENSE_INCLUDED else AccountTransaction.EXPENSE_AUTO
+                )
                 selectedTxn = null
             },
             onEditDetails = {

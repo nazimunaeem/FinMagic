@@ -163,4 +163,10 @@ interface BillDao {
         )
     """)
     suspend fun markAllButLatestSuperseded()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllReplace(bills: List<Bill>)
+
+    @Query("DELETE FROM bills")
+    suspend fun clearAll()
 }

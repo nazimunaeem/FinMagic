@@ -6,14 +6,19 @@ import androidx.lifecycle.viewModelScope
 import com.finmagic.data.local.AccountTypeConfig
 import com.finmagic.data.local.PreferenceManager
 import com.finmagic.data.local.dao.AccountTransactionWithAccount
+import com.finmagic.data.local.dao.CardTransactionDao
 import com.finmagic.data.local.dao.CategoryTotal
 import com.finmagic.data.local.entity.Account
 import com.finmagic.data.local.entity.AccountSummary
 import com.finmagic.data.local.entity.AccountTransaction
+import com.finmagic.data.local.entity.BillWithCard
+import com.finmagic.data.local.entity.CardPayment
+import com.finmagic.data.local.entity.CardTransaction
 import com.finmagic.data.local.entity.CreditCard
 import com.finmagic.data.repository.AccountRepository
 import com.finmagic.data.repository.BillRepository
 import com.finmagic.data.repository.CardRepository
+import com.finmagic.data.sms.parsers.TxnCategory
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -37,6 +42,7 @@ data class CardOutstandingItem(
     val card: CreditCard,
     val unpaidAmount: Double,
     val unpaidBillCount: Int,
+    val unpaidBillAmount: Double = 0.0,
     val currency: String = "BDT"
 )
 
@@ -68,7 +74,8 @@ class AccountsViewModel @Inject constructor(
     private val accountRepository: AccountRepository,
     private val preferenceManager: PreferenceManager,
     private val billRepository: BillRepository,
-    private val cardRepository: CardRepository
+    private val cardRepository: CardRepository,
+    private val cardTransactionDao: CardTransactionDao
 ) : AndroidViewModel(application) {
 
     private val now = Calendar.getInstance()
@@ -97,8 +104,10 @@ class AccountsViewModel @Inject constructor(
     private data class TypesAndCardsBundle(
         val allTypes: List<AccountTypeConfig>,
         val customTypes: List<AccountTypeConfig>,
-        val unpaidBills: List<com.finmagic.data.local.entity.BillWithCard>,
-        val cards: List<CreditCard>
+        val allBills: List<BillWithCard>,
+        val cards: List<CreditCard>,
+        val cardTxns: List<CardTransaction>,
+        val cardPayments: List<CardPayment>
     )
 
     val uiState: StateFlow<AccountsUiState> =
@@ -122,13 +131,28 @@ class AccountsViewModel @Inject constructor(
             ) { summaries, expenses, income, archived, (transactions, trails) ->
                 LedgerBundle(summaries, expenses, income, archived, transactions, trails)
             }
+            val cardsActivityFlow = combine(
+                billRepository.getAllBills(),
+                cardRepository.getAllCards(),
+                cardTransactionDao.observeAll(),
+                billRepository.getAllPayments()
+            ) { allBills, cards, cardTxns, cardPayments ->
+                listOf(allBills, cards, cardTxns, cardPayments)
+            }
             val metaFlow = combine(
                 preferenceManager.allAccountTypes,
                 preferenceManager.customAccountTypes,
-                billRepository.getUnpaidBills(),
-                cardRepository.getAllCards()
-            ) { allTypes, customTypes, unpaidBills, cards ->
-                TypesAndCardsBundle(allTypes, customTypes, unpaidBills, cards)
+                cardsActivityFlow
+            ) { allTypes, customTypes, cardData ->
+                @Suppress("UNCHECKED_CAST")
+                TypesAndCardsBundle(
+                    allTypes = allTypes,
+                    customTypes = customTypes,
+                    allBills = cardData[0] as List<BillWithCard>,
+                    cards = cardData[1] as List<CreditCard>,
+                    cardTxns = cardData[2] as List<CardTransaction>,
+                    cardPayments = cardData[3] as List<CardPayment>
+                )
             }
             combine(ledgerFlow, metaFlow) { ledger, meta ->
                 val counted = ledger.summaries.filter { it.account.includeInTotal }
@@ -143,25 +167,35 @@ class AccountsViewModel @Inject constructor(
                 val prevEnd = ms
 
                 val prevTransactions = ledger.transactions.filter { it.occurredAt >= prevStart && it.occurredAt < prevEnd }
-                val prevMonthIn = prevTransactions.filter { it.direction == AccountTransaction.DIRECTION_IN }.sumOf { it.amount }
+                val prevMonthIn = prevTransactions
+                    .filter { TxnCategory.countsAsIncome(it.isExpenseOverride, it.direction) }
+                    .sumOf { it.amount }
                 val prevMonthOut = prevTransactions.filter { it.direction == AccountTransaction.DIRECTION_OUT }.sumOf { it.amount }
 
                 val assetsTotal = counted.filter { !it.account.isLiability }.sumOf { it.displayBalance }
                 val accountLiabilitiesTotal = counted.filter { it.account.isLiability }.sumOf { kotlin.math.abs(it.displayBalance) }
 
-                val unpaidByCard = meta.unpaidBills.groupBy { it.cardId }
+                val billsByCard = meta.allBills.groupBy { it.cardId }
                 val cardItems = meta.cards.map { card ->
-                    val cardBills = unpaidByCard[card.id].orEmpty()
-                    val unpaid = cardBills.sumOf { maxOf(0.0, it.totalDue - it.paidAmount) }
+                    val cardBills = billsByCard[card.id].orEmpty()
+                    val unpaidBills = cardBills.filter { !it.isPaid && !it.isSuperseded }
+                    val unpaidBillAmount = unpaidBills.sumOf { maxOf(0.0, it.totalDue - it.paidAmount) }
+                    val outstanding = CardRepository.computeCardOutstanding(
+                        card = card,
+                        cardBills = cardBills,
+                        allCardTxns = meta.cardTxns,
+                        allPayments = meta.cardPayments
+                    )
                     CardOutstandingItem(
                         card = card,
-                        unpaidAmount = unpaid,
-                        unpaidBillCount = cardBills.size,
+                        unpaidAmount = outstanding,
+                        unpaidBillCount = unpaidBills.size,
+                        unpaidBillAmount = unpaidBillAmount,
                         currency = card.creditLimitCurrency.ifBlank { "BDT" }
                     )
                 }.sortedByDescending { it.unpaidAmount }
 
-                val cardLiabilityTotal = meta.unpaidBills.sumOf { maxOf(0.0, it.totalDue - it.paidAmount) }
+                val cardLiabilityTotal = cardItems.sumOf { it.unpaidAmount }
                 val netBalance = assetsTotal - accountLiabilitiesTotal - cardLiabilityTotal
 
                 AccountsUiState(

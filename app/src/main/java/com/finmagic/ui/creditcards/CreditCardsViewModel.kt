@@ -167,6 +167,7 @@ internal fun billMatchesPeriod(
 
 data class CardWithStats(
     val card: CreditCard,
+    val outstandingAmount: Double = 0.0,
     val billedByCurrency: Map<String, Double> = emptyMap(),
     val paidByCurrency: Map<String, Double> = emptyMap(),
     val unpaidByCurrency: Map<String, Double> = emptyMap(),
@@ -407,9 +408,16 @@ class CreditCardsViewModel @Inject constructor(
                         val matchingTxns = allCardTxns.filter { tx ->
                             tx.belongsTo(card) && matchesPeriod(tx.occurredAt, mode, selYear, selMonth)
                         }
+                        val outstanding = CardRepository.computeCardOutstanding(
+                            card = card,
+                            cardBills = cardBills,
+                            allCardTxns = allCardTxns,
+                            allPayments = allPayments
+                        )
 
                         CardWithStats(
                             card = card,
+                            outstandingAmount = outstanding,
                             billedByCurrency = periodBills
                                 .groupingBy { it.currency }
                                 .fold(0.0) { acc, b -> acc + b.totalDue },
@@ -430,6 +438,7 @@ class CreditCardsViewModel @Inject constructor(
                         )
                     }.sortedWith(
                         compareByDescending<CardWithStats> { it.overdueBillCount > 0 }
+                            .thenByDescending { it.outstandingAmount }
                             .thenByDescending { it.totalUnpaid }
                             .thenByDescending { it.transactionCount }
                     )
@@ -566,14 +575,22 @@ class CreditCardsViewModel @Inject constructor(
         }
     }
 
-    fun updateCardDetails(card: CreditCard, nickname: String, creditLimit: Double, currency: String) {
+    fun updateCardDetails(
+        card: CreditCard,
+        nickname: String,
+        creditLimit: Double,
+        currency: String,
+        newOutstanding: Double? = null,
+        clearOutstandingAnchor: Boolean = false
+    ) {
         viewModelScope.launch {
-            cardRepository.updateCard(
-                card.copy(
-                    cardNickname = nickname.trim(),
-                    creditLimit = creditLimit,
-                    creditLimitCurrency = currency.ifBlank { "BDT" }
-                )
+            cardRepository.updateCardDetails(
+                card = card,
+                nickname = nickname,
+                creditLimit = creditLimit,
+                currency = currency,
+                newOutstanding = newOutstanding,
+                clearOutstandingAnchor = clearOutstandingAnchor
             )
         }
     }

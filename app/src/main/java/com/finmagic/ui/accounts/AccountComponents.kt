@@ -174,6 +174,21 @@ fun TxnRow(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                         }
+                        if (TxnCategory.countsAsIncome(txn.isExpenseOverride, txn.direction)) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = StatusSafe.copy(alpha = 0.14f),
+                                modifier = Modifier.padding(end = 6.dp)
+                            ) {
+                                Text(
+                                    text = "Income",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = StatusSafe,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
                         SimpleDateFormat("hh:mm a", Locale.US).format(Date(txn.occurredAt)).let {
                             Text(
                                 text = it,
@@ -675,7 +690,8 @@ fun TxnDetailDialog(
                 if (isIn && onSetIncome != null) {
                     Checkbox(
                         checked = alreadyIncome,
-                        onCheckedChange = { checked -> onSetIncome(checked) }
+                        onCheckedChange = { checked -> onSetIncome(checked) },
+                        modifier = Modifier.testTag("txn_income_checkbox")
                     )
                     Text(
                         text = "Income",
@@ -685,7 +701,8 @@ fun TxnDetailDialog(
                 } else if (!isIn && onSetExpense != null) {
                     Checkbox(
                         checked = alreadyExpense,
-                        onCheckedChange = { checked -> onSetExpense(checked) }
+                        onCheckedChange = { checked -> onSetExpense(checked) },
+                        modifier = Modifier.testTag("txn_expense_checkbox")
                     )
                     Text(
                         text = "Expense",

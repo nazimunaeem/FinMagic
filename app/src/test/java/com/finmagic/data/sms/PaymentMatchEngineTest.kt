@@ -401,6 +401,17 @@ class FakeCreditCardDao : CreditCardDao {
         val idx = cards.indexOfFirst { it.id == cardId }
         if (idx >= 0) cards[idx] = cards[idx].copy(isActive = false)
     }
+
+    override suspend fun insertAllReplace(cards: List<CreditCard>) {
+        for (card in cards) {
+            this.cards.removeAll { it.id == card.id }
+            this.cards.add(card)
+        }
+    }
+
+    override suspend fun clearAll() {
+        cards.clear()
+    }
 }
 
 class FakeBillDao : BillDao {
@@ -500,6 +511,17 @@ class FakeBillDao : BillDao {
 
     override suspend fun markOlderBillsSuperseded(cardId: Long, currency: String, newBillDueDate: String) {}
     override suspend fun markAllButLatestSuperseded() {}
+
+    override suspend fun insertAllReplace(bills: List<Bill>) {
+        for (bill in bills) {
+            this.bills.removeAll { it.id == bill.id }
+            this.bills.add(bill)
+        }
+    }
+
+    override suspend fun clearAll() {
+        bills.clear()
+    }
 }
 
 class FakeCardPaymentDao : CardPaymentDao {
@@ -533,5 +555,16 @@ class FakeCardPaymentDao : CardPaymentDao {
 
     override suspend fun deleteOld(beforeTimestamp: Long) {
         payments.removeAll { it.detectedAt < beforeTimestamp }
+    }
+
+    override suspend fun insertAllReplace(payments: List<CardPayment>) {
+        for (payment in payments) {
+            this.payments.removeAll { it.id == payment.id }
+            this.payments.add(payment)
+        }
+    }
+
+    override suspend fun clearAll() {
+        payments.clear()
     }
 }

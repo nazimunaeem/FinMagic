@@ -5,16 +5,17 @@ import com.finmagic.data.local.PreferenceManager
 import com.finmagic.data.local.dao.AccountDao
 import com.finmagic.data.local.dao.AccountTransactionDao
 import com.finmagic.data.local.dao.BillDao
+import com.finmagic.data.local.dao.CardPaymentDao
 import com.finmagic.data.local.dao.CardTransactionDao
 import com.finmagic.data.local.dao.CreditCardDao
 import com.finmagic.data.local.entity.Account
 import com.finmagic.data.local.entity.AccountTransaction
 import com.finmagic.data.local.entity.Bill
-import com.finmagic.data.local.entity.CardTransaction
 import com.finmagic.data.local.entity.CreditCard
 import com.finmagic.data.repository.AccountRepository
 import com.finmagic.data.repository.BillRepository
 import com.finmagic.data.repository.CardRepository
+import com.finmagic.data.sms.parsers.TxnCategory
 import com.finmagic.ui.creditcards.billHistoryTimestamp
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
@@ -58,6 +59,7 @@ class LocalWebServer @Inject constructor(
     private val creditCardDao: CreditCardDao,
     private val billDao: BillDao,
     private val cardTransactionDao: CardTransactionDao,
+    private val cardPaymentDao: CardPaymentDao,
     private val accountRepository: AccountRepository,
     private val billRepository: BillRepository,
     private val cardRepository: CardRepository,
@@ -245,6 +247,13 @@ class LocalWebServer @Inject constructor(
                 val category = obj.get("category")?.asString?.trim().orEmpty().ifBlank { "Manual" }
                 val counterparty = obj.get("counterparty")?.asString?.trim()?.takeIf { it.isNotBlank() }
                 val occurredAt = obj.get("occurredAt")?.takeIf { !it.isJsonNull }?.asLong ?: System.currentTimeMillis()
+                val isIncome = obj.get("isIncome")?.takeIf { !it.isJsonNull }?.asBoolean
+                    ?: (direction == AccountTransaction.DIRECTION_IN)
+                val initialOverride = if (direction == AccountTransaction.DIRECTION_IN && isIncome) {
+                    AccountTransaction.EXPENSE_INCLUDED
+                } else {
+                    AccountTransaction.EXPENSE_AUTO
+                }
                 val id = accountRepository.storeManualToAccount(
                     accountId = accountId,
                     direction = direction,
@@ -253,7 +262,8 @@ class LocalWebServer @Inject constructor(
                     category = category,
                     counterparty = counterparty,
                     smsBody = "web:${UUID.randomUUID()}",
-                    smsRecordId = null
+                    smsRecordId = null,
+                    isExpenseOverride = initialOverride
                 ) ?: return jsonError(400, "Failed to insert transaction")
                 jsonOk(mapOf("ok" to true, "id" to id))
             }
@@ -278,6 +288,13 @@ class LocalWebServer @Inject constructor(
                 val amount = obj.get("amount")?.asDouble ?: 0.0
                 val ok = accountRepository.updateTransactionDetails(id, counterparty, category, amount)
                 if (!ok) return jsonError(400, "Failed to update transaction")
+                if (obj.has("isIncome") && !obj.get("isIncome").isJsonNull) {
+                    val markIncome = obj.get("isIncome").asBoolean
+                    accountRepository.setExpenseOverride(
+                        id,
+                        if (markIncome) AccountTransaction.EXPENSE_INCLUDED else AccountTransaction.EXPENSE_AUTO
+                    )
+                }
                 jsonOk(mapOf("ok" to true))
             }
             method == "DELETE" && path.startsWith("/api/transactions/") -> {
@@ -308,6 +325,32 @@ class LocalWebServer @Inject constructor(
                 )
                 jsonOk(mapOf("ok" to true, "id" to id))
             }
+            method == "PUT" && path.matches(Regex("^/api/cards/\\d+$")) -> {
+                val id = path.removePrefix("/api/cards/").toLongOrNull()
+                    ?: return jsonError(400, "Invalid card ID")
+                val existing = cardRepository.getCardById(id) ?: return jsonError(404, "Card not found")
+                val obj = JsonParser.parseString(body).asJsonObject
+                val nickname = if (obj.has("cardNickname") && !obj.get("cardNickname").isJsonNull) {
+                    obj.get("cardNickname").asString
+                } else existing.cardNickname
+                val creditLimit = if (obj.has("creditLimit") && !obj.get("creditLimit").isJsonNull) {
+                    obj.get("creditLimit").asDouble
+                } else existing.creditLimit
+                val currency = if (obj.has("currency") && !obj.get("currency").isJsonNull) {
+                    obj.get("currency").asString.trim().ifBlank { existing.creditLimitCurrency }
+                } else existing.creditLimitCurrency
+                val clearAnchor = obj.get("clearOutstandingAnchor")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                val newOutstanding = obj.get("outstanding")?.takeIf { !it.isJsonNull }?.asDouble
+                cardRepository.updateCardDetails(
+                    card = existing,
+                    nickname = nickname,
+                    creditLimit = creditLimit,
+                    currency = currency,
+                    newOutstanding = newOutstanding,
+                    clearOutstandingAnchor = clearAnchor
+                )
+                jsonOk(mapOf("ok" to true))
+            }
             method == "POST" && path == "/api/cards/transactions" -> {
                 val obj = JsonParser.parseString(body).asJsonObject
                 val cardId = obj.get("cardId")?.asLong ?: return jsonError(400, "cardId is required")
@@ -317,23 +360,20 @@ class LocalWebServer @Inject constructor(
                 if (amount <= 0.0) return jsonError(400, "Amount must be positive")
                 val category = obj.get("category")?.asString?.trim()?.takeIf { it.isNotBlank() }
                 val occurredAt = obj.get("occurredAt")?.takeIf { !it.isJsonNull }?.asLong ?: System.currentTimeMillis()
-                val id = cardTransactionDao.insert(
-                    CardTransaction(
-                        cardTail = card.cardLast4,
-                        bankName = card.bankName,
-                        merchant = merchant,
-                        amount = amount,
-                        occurredAt = occurredAt,
-                        category = category,
-                        smsBody = "manual:${UUID.randomUUID()}"
-                    )
+                val id = cardRepository.recordManualCardSpend(
+                    card = card,
+                    merchant = merchant,
+                    amount = amount,
+                    occurredAt = occurredAt,
+                    category = category
                 )
+                if (id <= 0L) return jsonError(400, "Failed to insert card spend")
                 jsonOk(mapOf("ok" to true, "id" to id))
             }
             method == "DELETE" && path.startsWith("/api/cards/transactions/") -> {
                 val id = path.removePrefix("/api/cards/transactions/").toLongOrNull()
                     ?: return jsonError(400, "Invalid card transaction ID")
-                cardTransactionDao.deleteById(id)
+                cardRepository.deleteCardSpend(id, manualOnly = false)
                 jsonOk(mapOf("ok" to true))
             }
             method == "POST" && path == "/api/bills" -> {
@@ -400,7 +440,9 @@ class LocalWebServer @Inject constructor(
         val bills = billDao.getAllBillsWithCards().first()
         val txns = txnDao.observeAllWithAccount().first().take(300)
         val allTxnsByAccount = txnDao.observeAllIncludingDirectSet().first().groupBy { it.accountId }
-        val cardTxns = cardTransactionDao.observeAll().first().take(200)
+        val allCardTxns = cardTransactionDao.observeAll().first()
+        val cardTxns = allCardTxns.take(200)
+        val cardPayments = cardPaymentDao.observeAllPayments().first()
         val expenseCategories = preferenceManager.cashExpenseCategories.first()
         val incomeCategories = preferenceManager.cashIncomeCategories.first()
 
@@ -434,19 +476,18 @@ class LocalWebServer @Inject constructor(
             .sortedBy { billHistoryTimestamp(it) }
         val paidBills = bills.filter { !it.isSuperseded && it.isPaid }
             .sortedByDescending { billHistoryTimestamp(it) }
-        val cardLiabilityTotal = unpaidBills.sumOf { maxOf(0.0, it.totalDue - it.paidAmount) }
-        val assetsTotal = accountDtos.filter {
-            (it["includeInTotal"] as Boolean) && !(it["isLiability"] as Boolean)
-        }.sumOf { it["balance"] as Double }
-        val accountLiabilitiesTotal = accountDtos.filter {
-            (it["includeInTotal"] as Boolean) && (it["isLiability"] as Boolean)
-        }.sumOf { kotlin.math.abs(it["balance"] as Double) }
-        val netWorth = assetsTotal - accountLiabilitiesTotal - cardLiabilityTotal
 
         val cardDtos = cards.map { c ->
+            val cardBills = bills.filter { it.cardId == c.id }
             val cardUnpaid = unpaidBills.filter { it.cardId == c.id }
                 .sumOf { maxOf(0.0, it.totalDue - it.paidAmount) }
             val cardUnpaidCount = unpaidBills.count { it.cardId == c.id }
+            val cardOutstanding = CardRepository.computeCardOutstanding(
+                card = c,
+                cardBills = cardBills,
+                allCardTxns = allCardTxns,
+                allPayments = cardPayments
+            )
             mapOf(
                 "id" to c.id,
                 "displayName" to c.displayName,
@@ -455,10 +496,21 @@ class LocalWebServer @Inject constructor(
                 "cardNickname" to c.cardNickname,
                 "creditLimit" to c.creditLimit,
                 "currency" to c.creditLimitCurrency,
-                "outstanding" to cardUnpaid,
-                "unpaidCount" to cardUnpaidCount
+                "outstanding" to cardOutstanding,
+                "unpaidBillAmount" to cardUnpaid,
+                "unpaidCount" to cardUnpaidCount,
+                "hasOutstandingAnchor" to (c.outstandingAnchor != null)
             )
         }
+
+        val cardLiabilityTotal = cardDtos.sumOf { it["outstanding"] as Double }
+        val assetsTotal = accountDtos.filter {
+            (it["includeInTotal"] as Boolean) && !(it["isLiability"] as Boolean)
+        }.sumOf { it["balance"] as Double }
+        val accountLiabilitiesTotal = accountDtos.filter {
+            (it["includeInTotal"] as Boolean) && (it["isLiability"] as Boolean)
+        }.sumOf { kotlin.math.abs(it["balance"] as Double) }
+        val netWorth = assetsTotal - accountLiabilitiesTotal - cardLiabilityTotal
 
         val billDtos = (unpaidBills + paidBills).map { b ->
             mapOf(
@@ -492,6 +544,7 @@ class LocalWebServer @Inject constructor(
                 "category" to t.category,
                 "counterparty" to t.counterparty,
                 "isManual" to t.isManual,
+                "isIncome" to TxnCategory.countsAsIncome(t.isExpenseOverride, t.direction),
                 "beforeBalance" to trail?.before,
                 "afterBalance" to trail?.after
             )
@@ -1238,7 +1291,7 @@ function renderBillRow(b) {
     '<div class="item-right">' +
       '<div style="text-align:right">' +
         '<div class="amt ' + (b.isPaid ? 'ok' : 'danger') + '">' + (b.isPaid ? '৳0.00' : fmt(b.outstanding, b.currency)) + '</div>' +
-        '<div class="muted" style="font-size:11px">' + (b.isPaid ? 'Cleared' : 'Outstanding') + '</div>' +
+        '<div class="muted" style="font-size:11px">' + (b.isPaid ? 'Cleared' : 'Bill Due') + '</div>' +
       '</div>' +
       (!b.isPaid
         ? '<button class="btn sm red" onclick="openPayBillModal(' + b.billId + ')">Pay Bill</button>'
@@ -1256,7 +1309,10 @@ function renderTxnRow(t, compact) {
     : '';
   return '<div class="item">' +
     '<div class="item-main">' +
-      '<div class="item-title">' + esc(title) + (t.category ? ' <span class="badge">' + esc(t.category) + '</span>' : '') + '</div>' +
+      '<div class="item-title">' + esc(title) +
+        (t.category ? ' <span class="badge">' + esc(t.category) + '</span>' : '') +
+        ((isIn && t.isIncome) ? ' <span class="badge ok">Income</span>' : '') +
+      '</div>' +
       '<div class="item-sub">' + esc(t.accountName) + ' • ' + fmtDate(t.occurredAt) + '</div>' +
     '</div>' +
     '<div class="item-right">' +
@@ -1403,22 +1459,32 @@ function renderCardsAndBills() {
   document.getElementById('cards-grid').innerHTML = DATA.cards.length
     ? DATA.cards.map(function(c){
         var pct = c.creditLimit > 0 ? Math.min(100, Math.round((c.outstanding / c.creditLimit) * 100)) : 0;
+        var avail = c.creditLimit > 0 ? Math.max(0, c.creditLimit - c.outstanding) : 0;
         return '<div class="cc-tile">' +
           '<div style="display:flex;justify-content:space-between;align-items:start;gap:8px">' +
             '<div>' +
               '<div style="font-weight:700;font-size:15px">' + esc(c.displayName) + '</div>' +
               '<div class="muted">•••• ' + esc(c.cardLast4) + ' • ' + esc(c.bankName) + '</div>' +
             '</div>' +
-            '<span class="badge ' + (c.unpaidCount > 0 ? 'danger' : 'ok') + '">' + (c.unpaidCount > 0 ? c.unpaidCount + ' unpaid' : 'All paid') + '</span>' +
+            '<div style="display:flex;gap:6px;align-items:center">' +
+              '<span class="badge ' + (c.unpaidCount > 0 ? 'danger' : 'ok') + '">' + (c.unpaidCount > 0 ? c.unpaidCount + ' unpaid bill' + (c.unpaidCount === 1 ? '' : 's') : 'All bills paid') + '</span>' +
+              '<button class="btn sm ghost" onclick="openEditCardModal(' + c.id + ')">Edit</button>' +
+            '</div>' +
           '</div>' +
           '<div style="display:flex;justify-content:space-between;align-items:baseline">' +
-            '<span class="muted">Outstanding</span>' +
+            '<span class="muted">Outstanding' + (c.hasOutstandingAnchor ? ' (edited)' : '') + '</span>' +
             '<strong class="amt ' + (c.outstanding > 0 ? 'danger' : 'ok') + '">' + fmt(c.outstanding, c.currency) + '</strong>' +
           '</div>' +
+          (c.unpaidBillAmount > 0
+            ? '<div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px">' +
+                '<span class="muted">Bill Due</span>' +
+                '<span>' + fmt(c.unpaidBillAmount, c.currency) + '</span>' +
+              '</div>'
+            : '') +
           (c.creditLimit > 0
             ? '<div>' +
                 '<div class="bar-bg"><div class="bar-fill ' + (pct > 80 ? 'danger' : '') + '" style="width:' + pct + '%"></div></div>' +
-                '<div class="muted" style="font-size:11px;margin-top:3px">Limit ' + fmt(c.creditLimit, c.currency) + ' • ' + pct + '% used</div>' +
+                '<div class="muted" style="font-size:11px;margin-top:3px">Limit ' + fmt(c.creditLimit, c.currency) + ' • ' + pct + '% used • ' + fmt(avail, c.currency) + ' avail</div>' +
               '</div>'
             : '') +
         '</div>';
@@ -1599,26 +1665,34 @@ async function delType(encName) {
 function openEditTxnModal(id) {
   var t = DATA.transactions.find(function(x){ return x.id === id; });
   if (!t) return;
+  var incHtml = t.direction === 'IN'
+    ? '<label style="display:flex;align-items:center;gap:8px;font-size:14px"><input id="m-e-income" type="checkbox" style="width:auto" ' + (t.isIncome ? 'checked' : '') + ' /> Mark as Income (Charts &amp; Stats)</label>'
+    : '';
   openModal(
     '<div class="modal-head"><h3>Edit Transaction</h3><button class="btn sm ghost" onclick="closeModal()">✕</button></div>' +
-    '<form class="list" style="gap:10px" onsubmit="saveEditTxn(event,' + id + ')">' +
+    '<form class="list" style="gap:10px" onsubmit="saveEditTxn(event,' + id + ',\'' + t.direction + '\')">' +
       '<div class="field"><label>Amount</label><input id="m-e-amt" type="number" step="0.01" min="0.01" value="' + t.amount + '" required /></div>' +
       '<div class="field"><label>Category</label><input id="m-e-cat" value="' + esc(t.category || '') + '" /></div>' +
       '<div class="field"><label>Counterparty / Note</label><input id="m-e-note" value="' + esc(t.counterparty || '') + '" /></div>' +
+      incHtml +
       '<div class="modal-actions"><button type="button" class="btn sec" onclick="closeModal()">Cancel</button><button type="submit" class="btn">Save</button></div>' +
     '</form>'
   );
 }
-async function saveEditTxn(e, id) {
+async function saveEditTxn(e, id, dir) {
   e.preventDefault();
   try {
+    var payload = {
+      amount: Number(document.getElementById('m-e-amt').value),
+      category: document.getElementById('m-e-cat').value,
+      counterparty: document.getElementById('m-e-note').value
+    };
+    if (dir === 'IN' && document.getElementById('m-e-income')) {
+      payload.isIncome = document.getElementById('m-e-income').checked;
+    }
     await api('/api/transactions/' + id, {
       method: 'PUT',
-      body: JSON.stringify({
-        amount: Number(document.getElementById('m-e-amt').value),
-        category: document.getElementById('m-e-cat').value,
-        counterparty: document.getElementById('m-e-note').value
-      })
+      body: JSON.stringify(payload)
     });
     closeModal(); toast('Transaction updated'); await loadData();
   } catch (err) { toast(err.message, true); }
@@ -1671,6 +1745,48 @@ async function saveNewCard(e) {
       })
     });
     closeModal(); toast('Card added'); await loadData();
+  } catch (err) { toast(err.message, true); }
+}
+
+function openEditCardModal(id) {
+  var c = DATA.cards.find(function(x){ return x.id === id; });
+  if (!c) return;
+  openModal(
+    '<div class="modal-head"><h3>Edit Credit Card</h3><button class="btn sm ghost" onclick="closeModal()">✕</button></div>' +
+    '<div class="muted">' + esc(c.bankName) + ' •••• ' + esc(c.cardLast4) + '</div>' +
+    '<form class="list" style="gap:10px" onsubmit="saveEditCard(event,' + id + ',' + Number(c.outstanding || 0) + ')">' +
+      '<div class="field"><label>Nickname</label><input id="m-ec-nick" value="' + esc(c.cardNickname || '') + '" /></div>' +
+      '<div class="field"><label>Current Outstanding (' + esc(c.currency || 'BDT') + ')</label><input id="m-ec-out" type="number" step="0.01" min="0" value="' + Number(c.outstanding || 0).toFixed(2) + '" /></div>' +
+      '<div class="field"><label>Credit Limit</label><input id="m-ec-limit" type="number" step="0.01" min="0" value="' + Number(c.creditLimit || 0) + '" /></div>' +
+      '<div class="field"><label>Currency</label><select id="m-ec-cur"><option value="BDT"' + (c.currency !== 'USD' ? ' selected' : '') + '>BDT</option><option value="USD"' + (c.currency === 'USD' ? ' selected' : '') + '>USD</option></select></div>' +
+      '<div class="modal-actions">' +
+        (c.hasOutstandingAnchor ? '<button type="button" class="btn sec" onclick="resetCardOutstanding(' + id + ')">Reset Auto</button>' : '') +
+        '<button type="button" class="btn sec" onclick="closeModal()">Cancel</button>' +
+        '<button type="submit" class="btn">Save</button>' +
+      '</div>' +
+    '</form>'
+  );
+}
+async function saveEditCard(e, id, prevOut) {
+  e.preventDefault();
+  try {
+    var outVal = Number(document.getElementById('m-ec-out').value);
+    var payload = {
+      cardNickname: document.getElementById('m-ec-nick').value,
+      creditLimit: Number(document.getElementById('m-ec-limit').value || 0),
+      currency: document.getElementById('m-ec-cur').value
+    };
+    if (!isNaN(outVal) && Math.abs(outVal - prevOut) > 0.005) {
+      payload.outstanding = outVal;
+    }
+    await api('/api/cards/' + id, { method: 'PUT', body: JSON.stringify(payload) });
+    closeModal(); toast('Card updated'); await loadData();
+  } catch (err) { toast(err.message, true); }
+}
+async function resetCardOutstanding(id) {
+  try {
+    await api('/api/cards/' + id, { method: 'PUT', body: JSON.stringify({ clearOutstandingAnchor: true }) });
+    closeModal(); toast('Outstanding reset to auto'); await loadData();
   } catch (err) { toast(err.message, true); }
 }
 

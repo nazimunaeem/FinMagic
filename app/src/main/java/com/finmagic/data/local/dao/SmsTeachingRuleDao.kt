@@ -41,4 +41,13 @@ interface SmsTeachingRuleDao {
 
     @Query("SELECT COUNT(*) FROM sms_teaching_rules WHERE enabled = 1")
     fun observeEnabledCount(): Flow<Int>
+
+    @Query("SELECT * FROM sms_teaching_rules ORDER BY id ASC")
+    suspend fun getAllOnce(): List<SmsTeachingRule>
+
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun insertAllReplace(rules: List<SmsTeachingRule>)
+
+    @Query("DELETE FROM sms_teaching_rules")
+    suspend fun clearAll()
 }

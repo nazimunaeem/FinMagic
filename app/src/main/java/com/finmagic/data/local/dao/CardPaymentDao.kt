@@ -32,4 +32,10 @@ interface CardPaymentDao {
 
     @Query("DELETE FROM card_payments WHERE detectedAt < :beforeTimestamp")
     suspend fun deleteOld(beforeTimestamp: Long)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllReplace(payments: List<CardPayment>)
+
+    @Query("DELETE FROM card_payments")
+    suspend fun clearAll()
 }

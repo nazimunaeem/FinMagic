@@ -15,4 +15,13 @@ interface SmsRuleApplicationDao {
 
     @Query("SELECT * FROM sms_rule_applications WHERE smsRecordId = :smsRecordId")
     suspend fun getBySmsRecord(smsRecordId: Long): List<SmsRuleApplication>
+
+    @Query("SELECT * FROM sms_rule_applications ORDER BY id ASC")
+    suspend fun getAllOnce(): List<SmsRuleApplication>
+
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun insertAllReplace(apps: List<SmsRuleApplication>)
+
+    @Query("DELETE FROM sms_rule_applications")
+    suspend fun clearAll()
 }

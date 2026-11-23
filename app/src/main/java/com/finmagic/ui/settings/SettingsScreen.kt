@@ -18,17 +18,21 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.EventNote
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.SystemUpdate
@@ -47,6 +51,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.finmagic.data.backup.BackupManager
 import com.finmagic.data.local.AppThemeMode
 import com.finmagic.data.sms.parsers.TxnCategory
 import com.finmagic.data.update.UpdateCheckState
@@ -54,6 +59,9 @@ import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.finmagic.ui.theme.StatusSafe
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,6 +84,12 @@ fun SettingsScreen(
     val webPortalAutoStart by viewModel.webPortalAutoStart.collectAsStateWithLifecycle()
     val updateCheckState by viewModel.updateCheckState.collectAsStateWithLifecycle()
     val autoUpdateEnabled by viewModel.autoUpdateCheckEnabled.collectAsStateWithLifecycle()
+    val persistentBackupEnabled by viewModel.persistentBackupEnabled.collectAsStateWithLifecycle()
+    val persistentBackupUri by viewModel.persistentBackupUri.collectAsStateWithLifecycle()
+    val lastBackupAt by viewModel.lastBackupAt.collectAsStateWithLifecycle()
+    val lastBackupLabel by viewModel.lastBackupLabel.collectAsStateWithLifecycle()
+    val backupUiState by viewModel.backupUiState.collectAsStateWithLifecycle()
+    val restorePreview by viewModel.restorePreview.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
 
@@ -90,6 +104,22 @@ fun SettingsScreen(
     ) { isGranted ->
         hasSmsPermission = isGranted
         if (isGranted) viewModel.triggerRescan()
+    }
+
+    val createBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            viewModel.saveBackupToUri(uri)
+        }
+    }
+
+    val openBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.requestRestorePreview(uri)
+        }
     }
 
     Scaffold(
@@ -413,6 +443,148 @@ fun SettingsScreen(
                 )
             }
 
+            // Group: Backup & Persistent File
+            SettingsGroup(title = "Backup & Persistent File") {
+                val backupStatusDesc = remember(persistentBackupEnabled, lastBackupAt, lastBackupLabel) {
+                    val pathInfo = lastBackupLabel
+                        ?: "${BackupManager.PERSISTENT_RELATIVE_DIR}/${BackupManager.PERSISTENT_FILE_NAME}"
+                    if (lastBackupAt > 0L) {
+                        val fmt = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.US)
+                        "Survives uninstall at $pathInfo • Last saved ${fmt.format(Date(lastBackupAt))}"
+                    } else {
+                        "Auto-saves account balances, card outstandings & database to $pathInfo (survives uninstall)"
+                    }
+                }
+
+                SettingsItem(
+                    icon = Icons.Default.Backup,
+                    title = "Auto-Save Persistent Backup",
+                    description = backupStatusDesc,
+                    trailing = {
+                        Switch(
+                            checked = persistentBackupEnabled,
+                            onCheckedChange = { viewModel.setPersistentBackupEnabled(it) },
+                            modifier = Modifier.testTag("persistent_backup_switch"),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = StatusSafe
+                            )
+                        )
+                    }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+
+                SettingsItem(
+                    icon = Icons.Default.Save,
+                    title = "Backup Now",
+                    description = "Write full backup JSON (balances + database + preferences) right now",
+                    onClick = {
+                        if (backupUiState !is BackupUiState.Working) {
+                            viewModel.backupNow()
+                        }
+                    },
+                    trailing = {
+                        if (backupUiState is BackupUiState.Working) {
+                            CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                        } else {
+                            TextButton(
+                                onClick = { viewModel.backupNow() },
+                                modifier = Modifier.testTag("backup_now_button")
+                            ) { Text("Save") }
+                        }
+                    }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+
+                SettingsItem(
+                    icon = Icons.Default.FolderOpen,
+                    title = "Save Copy / Set Custom File",
+                    description = if (persistentBackupUri != null) {
+                        "Custom file linked for auto-sync. Tap to change location"
+                    } else {
+                        "Choose any folder or cloud drive document to also sync backups"
+                    },
+                    onClick = {
+                        createBackupLauncher.launch(BackupManager.PERSISTENT_FILE_NAME)
+                    },
+                    trailing = {
+                        TextButton(
+                            onClick = { createBackupLauncher.launch(BackupManager.PERSISTENT_FILE_NAME) },
+                            modifier = Modifier.testTag("backup_choose_file_button")
+                        ) { Text(if (persistentBackupUri != null) "Change" else "Choose") }
+                    }
+                )
+
+                if (persistentBackupUri != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 56.dp, end = 16.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(
+                            onClick = { viewModel.clearCustomBackupUri() },
+                            modifier = Modifier.testTag("backup_clear_uri_button")
+                        ) {
+                            Text("Unlink custom file")
+                        }
+                    }
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+
+                SettingsItem(
+                    icon = Icons.Default.Restore,
+                    title = "Restore from Backup",
+                    description = "Load a FinMagic_Backup.json file after reinstall or on a new phone",
+                    onClick = {
+                        if (backupUiState !is BackupUiState.Working) {
+                            openBackupLauncher.launch(arrayOf("application/json", "*/*"))
+                        }
+                    },
+                    trailing = {
+                        TextButton(
+                            onClick = { openBackupLauncher.launch(arrayOf("application/json", "*/*")) },
+                            enabled = backupUiState !is BackupUiState.Working,
+                            modifier = Modifier.testTag("restore_backup_button")
+                        ) { Text("Restore") }
+                    }
+                )
+
+                when (val bState = backupUiState) {
+                    is BackupUiState.Working -> {
+                        Text(
+                            text = bState.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 12.dp)
+                        )
+                    }
+                    is BackupUiState.Message -> {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 56.dp, end = 12.dp, bottom = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = bState.text,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (bState.isError) MaterialTheme.colorScheme.error else StatusSafe,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { viewModel.clearBackupMessage() }) {
+                                Text("Dismiss")
+                            }
+                        }
+                    }
+                    BackupUiState.Idle -> Unit
+                }
+            }
+
             // Group 3: Data & Export
             SettingsGroup(title = "Data & Export") {
                 SettingsItem(
@@ -729,6 +901,67 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                 )
             }
+        }
+
+        val pendingRestore = restorePreview
+        if (pendingRestore != null) {
+            val summary = pendingRestore.second
+            val dateFmt = remember { SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.US) }
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissRestorePreview() },
+                title = { Text("Restore Backup?") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "This will replace all current accounts, cards, transactions, bills, and SMS rules with the backup snapshot.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "Saved: ${dateFmt.format(Date(summary.createdAt))} (v${summary.appVersion})",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Net Asset: Tk %,.0f".format(summary.netAsset),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "${summary.accountCount} accounts • ${summary.cardCount} cards • ${summary.transactionCount} txns • ${summary.billCount} bills • ${summary.ruleCount} rules",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { viewModel.confirmRestoreFromPending() },
+                        modifier = Modifier.testTag("confirm_restore_backup_button")
+                    ) {
+                        Text("Restore Now")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { viewModel.dismissRestorePreview() },
+                        modifier = Modifier.testTag("cancel_restore_backup_button")
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
     }
 }
