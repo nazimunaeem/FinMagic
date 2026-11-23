@@ -48,9 +48,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.finmagic.data.local.AccountTypeConfig
 import com.finmagic.data.local.entity.Account
 import com.finmagic.data.local.entity.AccountTransaction
 import com.finmagic.data.sms.parsers.TxnCategory
@@ -703,10 +705,24 @@ fun EditAccountDialog(
     onDismiss: () -> Unit,
     onConfirm: (String, Boolean) -> Unit,
     onDeleteRequest: () -> Unit,
-    onAdjustBalance: (() -> Unit)? = null
+    onAdjustBalance: (() -> Unit)? = null,
+    availableTypes: List<AccountTypeConfig> = emptyList(),
+    onConfirmDetails: ((name: String, accountType: String, isLiability: Boolean, includeInTotal: Boolean) -> Unit)? = null
 ) {
     var name by remember(account.id) { mutableStateOf(account.displayName) }
     var includeInTotal by remember(account.id) { mutableStateOf(account.includeInTotal) }
+    var selectedType by remember(account.id) { mutableStateOf(account.effectiveType) }
+    var isLiability by remember(account.id) { mutableStateOf(account.isLiability) }
+    val typesToShow = remember(availableTypes, selectedType, isLiability) {
+        val defaults = if (availableTypes.isEmpty()) {
+            Account.DEFAULT_TYPES.map { AccountTypeConfig(it.first, it.second) }
+        } else availableTypes
+        if (defaults.any { it.name.equals(selectedType, ignoreCase = true) }) {
+            defaults
+        } else {
+            defaults + AccountTypeConfig(selectedType, isLiability)
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -714,7 +730,7 @@ fun EditAccountDialog(
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 OutlinedTextField(
                     value = name,
@@ -723,6 +739,42 @@ fun EditAccountDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (account.kind != Account.KIND_CASH) {
+                    Text("Account Type", style = MaterialTheme.typography.labelMedium)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(typesToShow, key = { it.name }) { typeConfig ->
+                            val isSelected = selectedType.equals(typeConfig.name, ignoreCase = true)
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    selectedType = typeConfig.name
+                                    isLiability = typeConfig.isLiability
+                                },
+                                label = {
+                                    Text(
+                                        if (typeConfig.isLiability) "${typeConfig.name} (Liability)"
+                                        else typeConfig.name
+                                    )
+                                }
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isLiability = !isLiability },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = isLiability,
+                            onCheckedChange = { isLiability = it }
+                        )
+                        Text(
+                            "Liability account (subtracted from net balance)",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -771,11 +823,314 @@ fun EditAccountDialog(
         confirmButton = {
             TextButton(
                 enabled = name.isNotBlank(),
-                onClick = { onConfirm(name, includeInTotal) }
+                onClick = {
+                    if (onConfirmDetails != null) {
+                        onConfirmDetails(name, selectedType, isLiability, includeInTotal)
+                    } else {
+                        onConfirm(name, includeInTotal)
+                    }
+                }
             ) { Text("Save") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+fun AddAccountDialog(
+    availableTypes: List<AccountTypeConfig>,
+    onDismiss: () -> Unit,
+    onCreateCustomType: (name: String, isLiability: Boolean) -> Unit,
+    onConfirm: (
+        name: String,
+        accountType: String,
+        isLiability: Boolean,
+        bankName: String,
+        accountMask: String,
+        initialBalance: Double,
+        includeInTotal: Boolean
+    ) -> Unit
+) {
+    val types = remember(availableTypes) {
+        if (availableTypes.isEmpty()) Account.DEFAULT_TYPES.map { AccountTypeConfig(it.first, it.second) }
+        else availableTypes
+    }
+    var name by remember { mutableStateOf("") }
+    var selectedType by remember { mutableStateOf(types.firstOrNull { it.name == Account.TYPE_SAVINGS } ?: types.first()) }
+    var isLiability by remember { mutableStateOf(selectedType.isLiability) }
+    var bankName by remember { mutableStateOf("") }
+    var accountMask by remember { mutableStateOf("") }
+    var balanceText by remember { mutableStateOf("") }
+    var includeInTotal by remember { mutableStateOf(true) }
+    var showNewTypeInput by remember { mutableStateOf(false) }
+    var newTypeName by remember { mutableStateOf("") }
+    var newTypeIsLiability by remember { mutableStateOf(false) }
+
+    val parsedBalance = balanceText.replace(",", "").toDoubleOrNull() ?: 0.0
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Account") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Account name") },
+                    placeholder = { Text("e.g. Emergency Savings, Home Loan") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("add_account_name_input")
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Account Type", style = MaterialTheme.typography.labelMedium)
+                    TextButton(onClick = { showNewTypeInput = !showNewTypeInput }) {
+                        Text(if (showNewTypeInput) "Hide" else "+ New Type")
+                    }
+                }
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(types, key = { it.name }) { typeConfig ->
+                        FilterChip(
+                            selected = selectedType.name.equals(typeConfig.name, ignoreCase = true),
+                            onClick = {
+                                selectedType = typeConfig
+                                isLiability = typeConfig.isLiability
+                            },
+                            label = {
+                                Text(
+                                    if (typeConfig.isLiability) "${typeConfig.name} (Liability)"
+                                    else typeConfig.name
+                                )
+                            }
+                        )
+                    }
+                }
+                if (showNewTypeInput) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = newTypeName,
+                                onValueChange = { newTypeName = it },
+                                label = { Text("Custom type name") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { newTypeIsLiability = !newTypeIsLiability }
+                            ) {
+                                Checkbox(
+                                    checked = newTypeIsLiability,
+                                    onCheckedChange = { newTypeIsLiability = it }
+                                )
+                                Text("Treat as Liability (e.g. Loan)", style = MaterialTheme.typography.bodySmall)
+                            }
+                            TextButton(
+                                enabled = newTypeName.isNotBlank(),
+                                onClick = {
+                                    val trimmed = newTypeName.trim()
+                                    onCreateCustomType(trimmed, newTypeIsLiability)
+                                    val created = AccountTypeConfig(trimmed, newTypeIsLiability)
+                                    selectedType = created
+                                    isLiability = newTypeIsLiability
+                                    newTypeName = ""
+                                    showNewTypeInput = false
+                                }
+                            ) { Text("Add & Select Type") }
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = balanceText,
+                    onValueChange = { balanceText = it },
+                    label = { Text(if (isLiability) "Outstanding Balance (Tk)" else "Current Balance (Tk)") },
+                    placeholder = { Text("0.00") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = bankName,
+                    onValueChange = { bankName = it },
+                    label = { Text("Bank / Institution (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = accountMask,
+                    onValueChange = { accountMask = it },
+                    label = { Text("Account Number / Mask (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { includeInTotal = !includeInTotal },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = includeInTotal,
+                        onCheckedChange = { includeInTotal = it }
+                    )
+                    Text("Include in Net Balance", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = name.isNotBlank(),
+                onClick = {
+                    onConfirm(
+                        name.trim(),
+                        selectedType.name,
+                        isLiability,
+                        bankName.trim(),
+                        accountMask.trim(),
+                        parsedBalance,
+                        includeInTotal
+                    )
+                },
+                modifier = Modifier.testTag("add_account_confirm_button")
+            ) { Text("Create") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+fun ManageAccountTypesDialog(
+    allTypes: List<AccountTypeConfig>,
+    customTypes: List<AccountTypeConfig>,
+    onDismiss: () -> Unit,
+    onAddType: (name: String, isLiability: Boolean) -> Unit,
+    onDeleteCustomType: (name: String) -> Unit
+) {
+    var newName by remember { mutableStateOf("") }
+    var isLiability by remember { mutableStateOf(false) }
+    val customNames = remember(customTypes) { customTypes.map { it.name.lowercase() }.toSet() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Account Types") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    "Built-in & Custom Types",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                allTypes.forEach { type ->
+                    val isCustom = type.name.lowercase() in customNames
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = type.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (type.isLiability) {
+                                    MaterialTheme.colorScheme.error.copy(alpha = 0.14f)
+                                } else {
+                                    StatusSafe.copy(alpha = 0.14f)
+                                }
+                            ) {
+                                Text(
+                                    text = if (type.isLiability) "Liability" else "Asset",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (type.isLiability) MaterialTheme.colorScheme.error else StatusSafe,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        if (isCustom) {
+                            IconButton(onClick = { onDeleteCustomType(type.name) }) {
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = "Delete ${type.name}",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Create New Type",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    label = { Text("Type name (e.g. DPS, FDR, Mortgage)") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("new_account_type_input")
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { isLiability = !isLiability },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = isLiability,
+                        onCheckedChange = { isLiability = it }
+                    )
+                    Text("Liability (subtracted from net total)", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = newName.isNotBlank(),
+                onClick = {
+                    onAddType(newName.trim(), isLiability)
+                    newName = ""
+                    isLiability = false
+                },
+                modifier = Modifier.testTag("add_account_type_confirm_button")
+            ) { Text("Add Type") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Done") }
         }
     )
 }

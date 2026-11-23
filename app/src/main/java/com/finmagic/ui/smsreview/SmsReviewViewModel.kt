@@ -5,12 +5,14 @@ import androidx.lifecycle.viewModelScope
 import com.finmagic.data.local.KeywordJson
 import com.finmagic.data.local.dao.AccountDao
 import com.finmagic.data.local.dao.CardPaymentDao
+import com.finmagic.data.local.dao.CardTransactionDao
 import com.finmagic.data.local.dao.SmsRecordDao
 import com.finmagic.data.local.dao.SmsTeachingRuleDao
 import com.finmagic.data.local.entity.Account
 import com.finmagic.data.local.entity.AccountTransaction
 import com.finmagic.data.local.entity.Bill
 import com.finmagic.data.local.entity.CardPayment
+import com.finmagic.data.local.entity.CardTransaction
 import com.finmagic.data.local.entity.CreditCard
 import com.finmagic.data.local.entity.SmsRecord
 import com.finmagic.data.local.entity.SmsTeachingRule
@@ -36,7 +38,8 @@ class SmsReviewViewModel @Inject constructor(
     private val smsTeachingEngine: SmsTeachingEngine,
     private val billRepository: BillRepository,
     private val cardRepository: CardRepository,
-    private val cardPaymentDao: CardPaymentDao
+    private val cardPaymentDao: CardPaymentDao,
+    private val cardTransactionDao: CardTransactionDao
 ) : ViewModel() {
 
     val unparsedSms: StateFlow<List<SmsRecord>> =
@@ -94,7 +97,7 @@ class SmsReviewViewModel @Inject constructor(
         excludedKeywords: String
     ) {
         viewModelScope.launch {
-            if (saveRule && requiredKeywords.isNotBlank()) {
+            if (saveRule && (requiredKeywords.isNotBlank() || !record.address.isNullOrBlank())) {
                 ruleDao.insert(
                     SmsTeachingRule(
                         name = "Rule for ${record.address ?: "Unknown"}",
@@ -129,6 +132,114 @@ class SmsReviewViewModel @Inject constructor(
                 smsRecordDao.updateParsedStatus(record.id, true)
                 _selectedRecord.value = null
                 _message.value = "Transaction saved"
+            } else {
+                _message.value = "Failed to save — duplicate or invalid amount"
+            }
+        }
+    }
+
+    fun teachCardDebit(
+        record: SmsRecord,
+        cardId: Long,
+        amount: Double,
+        occurredAt: Long,
+        counterparty: String,
+        category: String,
+        balanceAfter: Double?,
+        saveRule: Boolean,
+        requiredKeywords: String,
+        excludedKeywords: String
+    ) {
+        viewModelScope.launch {
+            val card = cardRepository.getCardById(cardId)
+            if (card == null || amount <= 0) {
+                _message.value = "Failed to save — card not found or invalid amount"
+                return@launch
+            }
+            if (saveRule && (requiredKeywords.isNotBlank() || !record.address.isNullOrBlank())) {
+                ruleDao.insert(
+                    SmsTeachingRule(
+                        name = "Card rule for ${record.address ?: card.displayName}",
+                        senderKey = record.address?.trim()?.uppercase(),
+                        requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
+                        excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
+                        action = SmsTeachingRule.ACTION_CARD_DEBIT,
+                        accountId = 0L,
+                        cardId = cardId,
+                        category = category.ifBlank { null }
+                    )
+                )
+            }
+            if (record.isParsed) {
+                accountRepository.replaceParsedSmsEntries(record.id)
+            }
+            cardTransactionDao.deleteBySmsBody(record.body)
+            val insertedId = cardTransactionDao.insert(
+                CardTransaction(
+                    cardTail = card.cardLast4,
+                    bankName = card.bankName,
+                    merchant = counterparty.ifBlank { "Card Spend" },
+                    amount = amount,
+                    occurredAt = occurredAt,
+                    balanceAfter = balanceAfter,
+                    category = category.ifBlank { null },
+                    smsBody = record.body
+                )
+            )
+            if (insertedId > 0L) {
+                smsRecordDao.updateParsedStatus(record.id, true)
+                _selectedRecord.value = null
+                _message.value = "Card debit saved"
+            } else {
+                _message.value = "Failed to save card transaction"
+            }
+        }
+    }
+
+    fun teachCardCredit(
+        record: SmsRecord,
+        cardId: Long,
+        amount: Double,
+        occurredAt: Long,
+        saveRule: Boolean,
+        requiredKeywords: String,
+        excludedKeywords: String
+    ) {
+        viewModelScope.launch {
+            val card = cardRepository.getCardById(cardId)
+            if (card == null || amount <= 0) {
+                _message.value = "Failed to save — card not found or invalid amount"
+                return@launch
+            }
+            if (saveRule && (requiredKeywords.isNotBlank() || !record.address.isNullOrBlank())) {
+                ruleDao.insert(
+                    SmsTeachingRule(
+                        name = "Card credit rule for ${record.address ?: card.displayName}",
+                        senderKey = record.address?.trim()?.uppercase(),
+                        requiredKeywords = KeywordJson.encodeFromCommaSeparated(requiredKeywords),
+                        excludedKeywords = KeywordJson.encodeFromCommaSeparated(excludedKeywords),
+                        action = SmsTeachingRule.ACTION_CARD_CREDIT,
+                        accountId = 0L,
+                        cardId = cardId
+                    )
+                )
+            }
+            if (record.isParsed) {
+                accountRepository.replaceParsedSmsEntries(record.id)
+            }
+            val insertedId = cardPaymentDao.insert(
+                CardPayment(
+                    cardTail = card.cardLast4,
+                    amountBdt = amount,
+                    amountUsd = 0.0,
+                    paidAt = occurredAt,
+                    smsBody = record.body
+                )
+            )
+            if (insertedId > 0L) {
+                smsRecordDao.updateParsedStatus(record.id, true)
+                _selectedRecord.value = null
+                _message.value = "Card credit saved"
             } else {
                 _message.value = "Failed to save — duplicate or invalid amount"
             }

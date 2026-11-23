@@ -54,6 +54,7 @@ fun AccountsScreen(
     initialTab: Int = 0,
     onTabSelected: (Int) -> Unit = {},
     onAccountClick: (Long) -> Unit,
+    onCardClick: (Long) -> Unit = {},
     showTopBar: Boolean = true,
     showPill: Boolean = true,
     viewModel: AccountsViewModel = hiltViewModel()
@@ -64,6 +65,8 @@ fun AccountsScreen(
     val cashExpenseCategories by settingsViewModel.cashExpenseCategories.collectAsStateWithLifecycle()
     val cashIncomeCategories by settingsViewModel.cashIncomeCategories.collectAsStateWithLifecycle()
     var showAddDialog by remember { mutableStateOf(false) }
+    var showAddAccountDialog by remember { mutableStateOf(false) }
+    var showManageTypesDialog by remember { mutableStateOf(false) }
     var detailTxn by remember { mutableStateOf<AccountTransactionWithAccount?>(null) }
     var editTxn by remember { mutableStateOf<AccountTransaction?>(null) }
     var selectedTab by rememberSaveable { mutableIntStateOf(initialTab) }
@@ -193,45 +196,114 @@ fun AccountsScreen(
                             totalBalance = state.totalBalance,
                             monthIn = state.monthIn,
                             monthOut = state.monthOut,
-                            monthLabel = headerMonthLabel
+                            monthLabel = headerMonthLabel,
+                            assetsTotal = state.assetsTotal,
+                            liabilitiesTotal = state.accountLiabilitiesTotal + state.cardLiabilityTotal
                         )
                     }
 
-                    if (state.summaries.isNotEmpty()) {
-                        item {
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = "MY ACCOUNTS",
+                                text = "ACCOUNTS BY TYPE",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 4.dp)
+                                color = MaterialTheme.colorScheme.primary
                             )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { showManageTypesDialog = true },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(34.dp).testTag("manage_account_types_button")
+                                ) {
+                                    Text("Types", style = MaterialTheme.typography.labelSmall)
+                                }
+                                FilledTonalButton(
+                                    onClick = { showAddAccountDialog = true },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(34.dp).testTag("add_account_button")
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Account", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
                         }
-                        items(
-                            state.summaries.sortedWith(compareBy<AccountSummary> { it.account.kind != Account.KIND_CASH }.thenByDescending { it.displayBalance }),
-                            key = { "account_${it.account.id}" }
-                        ) { summary ->
-                            AccountCard(
-                                summary = summary,
-                                onClick = { onAccountClick(summary.account.id) },
-                                modifier = Modifier.padding(horizontal = 16.dp)
-                            )
+                    }
+
+                    if (state.summaries.isNotEmpty()) {
+                        val defaultTypeOrder = listOf(
+                            Account.TYPE_CASH.lowercase(),
+                            Account.TYPE_SAVINGS.lowercase(),
+                            Account.TYPE_DEPOSIT.lowercase(),
+                            Account.TYPE_LOAN.lowercase()
+                        )
+                        val typeConfigMap = state.allAccountTypes.associateBy { it.name.lowercase() }
+                        val grouped = state.summaries
+                            .groupBy { it.account.effectiveType }
+                            .entries
+                            .sortedWith(compareBy<Map.Entry<String, List<AccountSummary>>> {
+                                val idx = defaultTypeOrder.indexOf(it.key.lowercase())
+                                if (idx >= 0) idx else 100
+                            }.thenBy { it.key.lowercase() })
+
+                        grouped.forEach { (typeName, groupSummaries) ->
+                            val isTypeLiability = (typeConfigMap[typeName.lowercase()]?.isLiability == true) ||
+                                groupSummaries.any { it.account.isLiability }
+                            val typeTotal = groupSummaries.sumOf {
+                                if (it.account.isLiability) kotlin.math.abs(it.displayBalance) else it.displayBalance
+                            }
+                            item(key = "type_header_$typeName") {
+                                AccountTypeGroupHeader(
+                                    typeName = typeName,
+                                    typeTotal = typeTotal,
+                                    count = groupSummaries.size,
+                                    isLiability = isTypeLiability
+                                )
+                            }
+                            items(
+                                groupSummaries.sortedByDescending { it.displayBalance },
+                                key = { "account_${it.account.id}" }
+                            ) { summary ->
+                                AccountCard(
+                                    summary = summary,
+                                    onClick = { onAccountClick(summary.account.id) },
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
+                            }
                         }
                     } else {
                         item {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 48.dp),
+                                    .padding(vertical = 32.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "No accounts yet.\nLedger SMS will create them automatically.",
+                                    text = "No accounts yet.\nTap + Account or ledger SMS will create them automatically.",
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center
                                 )
                             }
+                        }
+                    }
+
+                    if (state.cardOutstandingItems.isNotEmpty() || state.cardLiabilityTotal > 0.0) {
+                        item(key = "cards_liability_section") {
+                            CardsLiabilitySummaryCard(
+                                cardTotal = state.cardLiabilityTotal,
+                                items = state.cardOutstandingItems,
+                                onCardClick = onCardClick,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                            )
                         }
                     }
 
@@ -269,7 +341,9 @@ fun AccountsScreen(
                             totalBalance = state.totalBalance,
                             monthIn = state.monthIn,
                             monthOut = state.monthOut,
-                            monthLabel = headerMonthLabel
+                            monthLabel = headerMonthLabel,
+                            assetsTotal = state.assetsTotal,
+                            liabilitiesTotal = state.accountLiabilitiesTotal + state.cardLiabilityTotal
                         )
                     }
 
@@ -363,6 +437,42 @@ fun AccountsScreen(
                 }
             }
         }
+    }
+
+    if (showAddAccountDialog) {
+        AddAccountDialog(
+            availableTypes = state.allAccountTypes,
+            onDismiss = { showAddAccountDialog = false },
+            onCreateCustomType = { typeName, isLiab ->
+                viewModel.addCustomAccountType(typeName, isLiab)
+            },
+            onConfirm = { name, accountType, isLiability, bankName, accountMask, initialBalance, includeInTotal ->
+                viewModel.createAccount(
+                    name = name,
+                    accountType = accountType,
+                    isLiability = isLiability,
+                    bankName = bankName,
+                    accountMask = accountMask,
+                    initialBalance = initialBalance,
+                    includeInTotal = includeInTotal
+                )
+                showAddAccountDialog = false
+            }
+        )
+    }
+
+    if (showManageTypesDialog) {
+        ManageAccountTypesDialog(
+            allTypes = state.allAccountTypes,
+            customTypes = state.customAccountTypes,
+            onDismiss = { showManageTypesDialog = false },
+            onAddType = { typeName, isLiab ->
+                viewModel.addCustomAccountType(typeName, isLiab)
+            },
+            onDeleteCustomType = { typeName ->
+                viewModel.removeCustomAccountType(typeName)
+            }
+        )
     }
 
     if (showAddDialog) {
@@ -767,35 +877,63 @@ internal fun TotalBalanceHeader(
     totalBalance: Double,
     monthIn: Double,
     monthOut: Double,
-    monthLabel: String
+    monthLabel: String,
+    assetsTotal: Double = totalBalance,
+    liabilitiesTotal: Double = 0.0
 ) {
     val net = monthIn - monthOut
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(20.dp),
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            Text(
-                text = "Total Balance",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-            )
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (liabilitiesTotal > 0.0) "Net Worth" else "Total Balance",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                )
+                Text(
+                    text = monthLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.65f),
+                    fontWeight = FontWeight.Medium
+                )
+            }
             Text(
                 text = String.format(Locale.US, "Tk %,.2f", totalBalance),
-                style = MaterialTheme.typography.headlineLarge,
+                style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+                color = if (totalBalance < 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
             )
-            Text(
-                text = monthLabel,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
-                fontWeight = FontWeight.Medium
-            )
-            Spacer(modifier = Modifier.height(10.dp))
+            if (liabilitiesTotal > 0.0) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = String.format(Locale.US, "Assets: Tk %,.0f", assetsTotal),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = StatusSafe,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = String.format(Locale.US, "Liabilities: −Tk %,.0f", liabilitiesTotal),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -1001,6 +1139,149 @@ fun accountIcon(kind: String): ImageVector = when (kind) {
 }
 
 @Composable
+private fun AccountTypeGroupHeader(
+    typeName: String,
+    typeTotal: Double,
+    count: Int,
+    isLiability: Boolean
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(top = 6.dp, bottom = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = "${typeName.uppercase()} ($count)",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (isLiability) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+            )
+            if (isLiability) {
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.14f)
+                ) {
+                    Text(
+                        text = "LIABILITY",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                    )
+                }
+            }
+        }
+        Text(
+            text = (if (isLiability && typeTotal > 0) "−" else "") + String.format(Locale.US, "Tk %,.0f", typeTotal),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = if (isLiability) MaterialTheme.colorScheme.error else StatusSafe
+        )
+    }
+}
+
+@Composable
+private fun CardsLiabilitySummaryCard(
+    cardTotal: Double,
+    items: List<CardOutstandingItem>,
+    onCardClick: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.CreditCard,
+                        contentDescription = "Credit Card Liability",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = "CARD TOTAL",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.14f)
+                    ) {
+                        Text(
+                            text = "LIABILITY",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                        )
+                    }
+                }
+                Text(
+                    text = String.format(Locale.US, "−Tk %,.0f", cardTotal),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.testTag("accounts_card_total_liability")
+                )
+            }
+            if (items.isNotEmpty()) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.error.copy(alpha = 0.15f))
+                items.forEach { item ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onCardClick(item.card.id) }
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = item.card.displayName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = if (item.unpaidBillCount > 0) "${item.unpaidBillCount} unpaid bill(s)" else "All bills paid",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = String.format(Locale.US, "Tk %,.0f", item.unpaidAmount),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (item.unpaidAmount > 0.0) MaterialTheme.colorScheme.error else StatusSafe
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 internal fun AccountCard(
     summary: AccountSummary,
     onClick: () -> Unit,
@@ -1008,12 +1289,12 @@ internal fun AccountCard(
 ) {
     val account = summary.account
     val balance = summary.displayBalance
+    val isLiability = account.isLiability
 
-    val kindLabel = when (account.kind) {
-        Account.KIND_CASH -> "Cash"
-        Account.KIND_BANK -> "Bank"
-        Account.KIND_WALLET -> "Wallet"
-        else -> "Account"
+    val kindLabel = buildString {
+        append(account.effectiveType)
+        if (isLiability) append(" · Liability")
+        if (!account.includeInTotal) append(" · Excluded")
     }
 
     Card(
@@ -1027,7 +1308,7 @@ internal fun AccountCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -1035,13 +1316,16 @@ internal fun AccountCard(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                    .background(
+                        if (isLiability) MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
+                        else MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = accountIcon(account.kind),
                     contentDescription = kindLabel,
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = if (isLiability) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -1054,14 +1338,14 @@ internal fun AccountCard(
                 Text(
                     text = kindLabel,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (isLiability) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Text(
-                text = String.format(Locale.US, "Tk %,.0f", balance),
+                text = (if (isLiability && balance > 0) "−" else "") + String.format(Locale.US, "Tk %,.0f", kotlin.math.abs(balance)),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
+                color = if (isLiability) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
             )
         }
     }

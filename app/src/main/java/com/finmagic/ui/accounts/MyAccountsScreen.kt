@@ -57,6 +57,7 @@ fun MyAccountsScreen(
     viewModel: MyAccountsViewModel = hiltViewModel()
 ) {
     val summaries by viewModel.summaries.collectAsStateWithLifecycle()
+    val allAccountTypes by viewModel.allAccountTypes.collectAsStateWithLifecycle()
     var editTarget by remember { mutableStateOf<AccountSummary?>(null) }
     var deleteTarget by remember { mutableStateOf<Account?>(null) }
     var adjustCashTarget by remember { mutableStateOf<AccountSummary?>(null) }
@@ -134,16 +135,21 @@ fun MyAccountsScreen(
         )
     }
 
-    // Edit dialog (rename / delete / adjust balance) for non-cash accounts
+    // Edit dialog (rename / type / delete / adjust balance)
     editTarget?.let { summary ->
         EditAccountDialog(
             account = summary.account,
+            availableTypes = allAccountTypes,
             onDismiss = { editTarget = null },
             onConfirm = { newName, includeInTotal ->
                 viewModel.renameAccount(summary.account.id, newName)
                 if (includeInTotal != summary.account.includeInTotal) {
                     viewModel.setIncludeInTotal(summary.account.id, includeInTotal)
                 }
+                editTarget = null
+            },
+            onConfirmDetails = { newName, accountType, isLiability, includeInTotal ->
+                viewModel.updateAccountDetails(summary.account.id, newName, accountType, isLiability, includeInTotal)
                 editTarget = null
             },
             onDeleteRequest = {

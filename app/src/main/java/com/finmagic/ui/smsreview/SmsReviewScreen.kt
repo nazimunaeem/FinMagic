@@ -203,6 +203,12 @@ fun SmsReviewScreen(
             onTeachDebit = { accountId, amount, occurredAt, counterparty, category, balanceAfter, saveRule, req, exc ->
                 viewModel.teachSms(record, accountId, AccountTransaction.DIRECTION_OUT, amount, occurredAt, counterparty, category, balanceAfter, saveRule, req, exc)
             },
+            onTeachCardCredit = { cardId, amount, occurredAt, saveRule, req, exc ->
+                viewModel.teachCardCredit(record, cardId, amount, occurredAt, saveRule, req, exc)
+            },
+            onTeachCardDebit = { cardId, amount, occurredAt, counterparty, category, balanceAfter, saveRule, req, exc ->
+                viewModel.teachCardDebit(record, cardId, amount, occurredAt, counterparty, category, balanceAfter, saveRule, req, exc)
+            },
             onTeachTransfer = { fromAccountId, toAccountId, amount, occurredAt, saveRule, req, exc ->
                 viewModel.teachTransfer(record, fromAccountId, toAccountId, amount, occurredAt, saveRule, req, exc)
             },

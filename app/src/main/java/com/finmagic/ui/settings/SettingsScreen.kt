@@ -3,6 +3,8 @@ package com.finmagic.ui.settings
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -11,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTime
@@ -18,25 +21,35 @@ import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.EventNote
+import androidx.compose.material.icons.filled.Label
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sms
-import androidx.compose.material.icons.filled.EventNote
-import androidx.compose.material.icons.filled.Label
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.finmagic.data.local.AppThemeMode
 import com.finmagic.data.sms.parsers.TxnCategory
+import com.finmagic.data.update.UpdateCheckState
 import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -58,7 +71,13 @@ fun SettingsScreen(
     val cashExpenseCategories by viewModel.cashExpenseCategories.collectAsStateWithLifecycle()
     val cashIncomeCategories by viewModel.cashIncomeCategories.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val webServerState by viewModel.webServerState.collectAsStateWithLifecycle()
+    val webPortalPort by viewModel.webPortalPort.collectAsStateWithLifecycle()
+    val webPortalAutoStart by viewModel.webPortalAutoStart.collectAsStateWithLifecycle()
+    val updateCheckState by viewModel.updateCheckState.collectAsStateWithLifecycle()
+    val autoUpdateEnabled by viewModel.autoUpdateCheckEnabled.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
 
     var hasSmsPermission by remember {
         mutableStateOf(
@@ -437,13 +456,269 @@ fun SettingsScreen(
                 }
             }
 
+            // Group: Wi-Fi / Hotspot Web Portal
+            SettingsGroup(title = "Web Portal (Wi-Fi / Hotspot)") {
+                SettingsItem(
+                    icon = Icons.Default.Wifi,
+                    title = "Enable Web Portal",
+                    description = if (webServerState.isRunning) {
+                        "Serving on port ${webServerState.port}. Open URL from same Wi-Fi or hotspot"
+                    } else {
+                        "View, add, and edit accounts, bills, and transactions from a browser"
+                    },
+                    trailing = {
+                        Switch(
+                            checked = webServerState.isRunning,
+                            onCheckedChange = { viewModel.toggleWebServer(it) },
+                            modifier = Modifier.testTag("web_portal_toggle"),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = StatusSafe
+                            )
+                        )
+                    }
+                )
+
+                if (webServerState.error != null) {
+                    Text(
+                        text = webServerState.error!!,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 10.dp)
+                    )
+                }
+
+                if (webServerState.isRunning) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (webServerState.urls.isEmpty()) {
+                            Text(
+                                text = "No Wi-Fi or Hotspot IPv4 address found. Turn on Wi-Fi or Hotspot and tap Refresh IPs.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            webServerState.urls.forEach { url ->
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Language,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = url,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        IconButton(
+                                            onClick = {
+                                                clipboard.setText(AnnotatedString(url))
+                                                Toast.makeText(context, "Copied $url", Toast.LENGTH_SHORT).show()
+                                            },
+                                            modifier = Modifier.size(40.dp)
+                                        ) {
+                                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy URL", modifier = Modifier.size(18.dp))
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                runCatching {
+                                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                                }
+                                            },
+                                            modifier = Modifier.size(40.dp)
+                                        ) {
+                                            Icon(Icons.Default.OpenInBrowser, contentDescription = "Open in Browser", modifier = Modifier.size(18.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        TextButton(
+                            onClick = { viewModel.refreshWebPortalUrls() },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Refresh Network IPs")
+                        }
+                    }
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+
+                var showPortDialog by remember { mutableStateOf(false) }
+                SettingsItem(
+                    icon = Icons.Default.Language,
+                    title = "Portal Port",
+                    description = "Current port: $webPortalPort",
+                    onClick = { showPortDialog = true },
+                    trailing = {
+                        Text(
+                            text = "$webPortalPort",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                )
+
+                if (showPortDialog) {
+                    var portText by remember { mutableStateOf(webPortalPort.toString()) }
+                    val parsedPort = portText.toIntOrNull()
+                    AlertDialog(
+                        onDismissRequest = { showPortDialog = false },
+                        title = { Text("Web Portal Port") },
+                        text = {
+                            OutlinedTextField(
+                                value = portText,
+                                onValueChange = { portText = it.filter { ch -> ch.isDigit() }.take(5) },
+                                label = { Text("Port (1024 - 65535)") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(
+                                enabled = parsedPort != null && parsedPort in 1024..65535,
+                                onClick = {
+                                    viewModel.setWebPortalPort(parsedPort!!)
+                                    showPortDialog = false
+                                }
+                            ) { Text("Save") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showPortDialog = false }) { Text("Cancel") }
+                        }
+                    )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+
+                SettingsItem(
+                    icon = Icons.Default.Refresh,
+                    title = "Auto-Start Portal",
+                    description = "Start Wi-Fi / Hotspot server automatically when app opens",
+                    trailing = {
+                        Switch(
+                            checked = webPortalAutoStart,
+                            onCheckedChange = { viewModel.setWebPortalAutoStart(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = StatusSafe
+                            )
+                        )
+                    }
+                )
+            }
+
+            // Group: App Updates (GitHub)
+            SettingsGroup(title = "App Updates (GitHub)") {
+                SettingsItem(
+                    icon = Icons.Default.SystemUpdate,
+                    title = "Auto-Check Updates",
+                    description = "Check nazimunaeem/FinMagic releases on startup",
+                    trailing = {
+                        Switch(
+                            checked = autoUpdateEnabled,
+                            onCheckedChange = { viewModel.setAutoUpdateCheckEnabled(it) },
+                            modifier = Modifier.testTag("auto_update_switch"),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = StatusSafe
+                            )
+                        )
+                    }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+
+                SettingsItem(
+                    icon = Icons.Default.Refresh,
+                    title = "Check for Updates",
+                    description = when (val st = updateCheckState) {
+                        is UpdateCheckState.Checking -> "Checking GitHub releases..."
+                        is UpdateCheckState.UpdateAvailable -> "New version ${st.release.tagName} available"
+                        is UpdateCheckState.UpToDate -> "Up to date (v${st.currentVersion})"
+                        is UpdateCheckState.Error -> st.message
+                        UpdateCheckState.Idle -> "Current version: v${viewModel.installedVersionName}"
+                    },
+                    onClick = {
+                        if (updateCheckState !is UpdateCheckState.Checking) {
+                            viewModel.checkForUpdatesManual()
+                        }
+                    },
+                    trailing = {
+                        if (updateCheckState is UpdateCheckState.Checking) {
+                            CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                        } else {
+                            TextButton(
+                                onClick = { viewModel.checkForUpdatesManual() },
+                                modifier = Modifier.testTag("check_updates_button")
+                            ) { Text("Check") }
+                        }
+                    }
+                )
+
+                if (updateCheckState is UpdateCheckState.UpdateAvailable) {
+                    val release = (updateCheckState as UpdateCheckState.UpdateAvailable).release
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 56.dp, end = 16.dp, bottom = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (release.releaseNotes.isNotBlank()) {
+                            Text(
+                                text = release.releaseNotes.take(240),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                val targetUrl = release.apkDownloadUrl ?: release.htmlUrl
+                                runCatching {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)))
+                                }
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("download_update_button")
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Download ${release.tagName}")
+                        }
+                    }
+                }
+            }
+
             // App Info
             Column(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    "FinMagic v1.0.1",
+                    "FinMagic v${viewModel.installedVersionName}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

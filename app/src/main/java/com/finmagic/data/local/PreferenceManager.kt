@@ -29,6 +29,11 @@ enum class AppThemeMode(val label: String) {
     SYSTEM("System")
 }
 
+data class AccountTypeConfig(
+    val name: String,
+    val isLiability: Boolean = false
+)
+
 @Singleton
 class PreferenceManager @Inject constructor(@ApplicationContext private val context: Context) {
 
@@ -44,6 +49,11 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
     private val CASH_INCOME_CATEGORIES = stringPreferencesKey("cash_income_categories")
     private val RECURRING_TEMPLATES = stringSetPreferencesKey("recurring_templates")
     private val THEME_MODE = stringPreferencesKey("theme_mode")
+    private val CUSTOM_ACCOUNT_TYPES = stringSetPreferencesKey("custom_account_types")
+    private val WEB_PORTAL_PORT = intPreferencesKey("web_portal_port")
+    private val WEB_PORTAL_AUTO_START = booleanPreferencesKey("web_portal_auto_start")
+    private val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_update_check")
+    private val SKIPPED_UPDATE_TAG = stringPreferencesKey("skipped_update_tag")
 
     val notificationsEnabled: Flow<Boolean> = context.dataStore.data.map { it[NOTIFICATIONS_ENABLED] ?: true }
     val alertRules: Flow<Set<String>> = context.dataStore.data.map {
@@ -177,6 +187,81 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
             val current = prefs[RECURRING_TEMPLATES].orEmpty().toMutableSet()
             current.removeIf { it.startsWith("${template.kind.lowercase()}|${template.title.trim()}") }
             prefs[RECURRING_TEMPLATES] = current
+        }
+    }
+
+    // ---- Custom Account Types ----
+
+    val customAccountTypes: Flow<List<AccountTypeConfig>> = context.dataStore.data.map { prefs ->
+        prefs[CUSTOM_ACCOUNT_TYPES].orEmpty().mapNotNull { entry ->
+            val sep = entry.indexOf('\u0000')
+            val name = if (sep >= 0) entry.substring(0, sep).trim() else entry.trim()
+            if (name.isBlank()) return@mapNotNull null
+            val isLiability = if (sep >= 0) entry.substring(sep + 1) == "1" else false
+            AccountTypeConfig(name = name, isLiability = isLiability)
+        }.sortedBy { it.name.lowercase() }
+    }
+
+    val allAccountTypes: Flow<List<AccountTypeConfig>> = customAccountTypes.map { custom ->
+        val builtIn = com.finmagic.data.local.entity.Account.DEFAULT_TYPES.map { (name, liab) ->
+            AccountTypeConfig(name = name, isLiability = liab)
+        }
+        val builtInNames = builtIn.map { it.name.lowercase() }.toSet()
+        builtIn + custom.filter { it.name.lowercase() !in builtInNames }
+    }
+
+    suspend fun addCustomAccountType(name: String, isLiability: Boolean) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        val builtInNames = com.finmagic.data.local.entity.Account.DEFAULT_TYPES.map { it.first.lowercase() }.toSet()
+        if (trimmed.lowercase() in builtInNames) return
+        context.dataStore.edit { prefs ->
+            val current = prefs[CUSTOM_ACCOUNT_TYPES].orEmpty().toMutableSet()
+            current.removeAll {
+                val n = it.substringBefore('\u0000').trim()
+                n.equals(trimmed, ignoreCase = true)
+            }
+            current.add("$trimmed\u0000${if (isLiability) "1" else "0"}")
+            prefs[CUSTOM_ACCOUNT_TYPES] = current
+        }
+    }
+
+    suspend fun removeCustomAccountType(name: String) {
+        val trimmed = name.trim()
+        context.dataStore.edit { prefs ->
+            val current = prefs[CUSTOM_ACCOUNT_TYPES].orEmpty().toMutableSet()
+            current.removeAll { it.substringBefore('\u0000').trim().equals(trimmed, ignoreCase = true) }
+            prefs[CUSTOM_ACCOUNT_TYPES] = current
+        }
+    }
+
+    // ---- Wi-Fi / Hotspot Web Portal ----
+
+    val webPortalPort: Flow<Int> = context.dataStore.data.map { it[WEB_PORTAL_PORT] ?: 8080 }
+    val webPortalAutoStart: Flow<Boolean> = context.dataStore.data.map { it[WEB_PORTAL_AUTO_START] ?: false }
+
+    suspend fun setWebPortalPort(port: Int) {
+        val safePort = port.coerceIn(1024, 65535)
+        context.dataStore.edit { it[WEB_PORTAL_PORT] = safePort }
+    }
+
+    suspend fun setWebPortalAutoStart(enabled: Boolean) {
+        context.dataStore.edit { it[WEB_PORTAL_AUTO_START] = enabled }
+    }
+
+    // ---- GitHub Auto Update ----
+
+    val autoUpdateCheckEnabled: Flow<Boolean> = context.dataStore.data.map { it[AUTO_UPDATE_CHECK] ?: true }
+    val skippedUpdateTag: Flow<String?> = context.dataStore.data.map { it[SKIPPED_UPDATE_TAG] }
+
+    suspend fun setAutoUpdateCheckEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[AUTO_UPDATE_CHECK] = enabled }
+    }
+
+    suspend fun setSkippedUpdateTag(tag: String?) {
+        context.dataStore.edit { prefs ->
+            if (tag.isNullOrBlank()) prefs.remove(SKIPPED_UPDATE_TAG)
+            else prefs[SKIPPED_UPDATE_TAG] = tag
         }
     }
 }

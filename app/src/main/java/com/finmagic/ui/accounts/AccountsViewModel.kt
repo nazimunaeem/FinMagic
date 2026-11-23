@@ -3,13 +3,17 @@ package com.finmagic.ui.accounts
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.finmagic.data.local.AccountTypeConfig
+import com.finmagic.data.local.PreferenceManager
 import com.finmagic.data.local.dao.AccountTransactionWithAccount
 import com.finmagic.data.local.dao.CategoryTotal
 import com.finmagic.data.local.entity.Account
 import com.finmagic.data.local.entity.AccountSummary
 import com.finmagic.data.local.entity.AccountTransaction
-import com.finmagic.data.local.PreferenceManager
+import com.finmagic.data.local.entity.CreditCard
 import com.finmagic.data.repository.AccountRepository
+import com.finmagic.data.repository.BillRepository
+import com.finmagic.data.repository.CardRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -29,6 +33,13 @@ internal fun monthTrendPercent(current: Double, previous: Double): Double {
     return ((current - previous) / previous) * 100.0
 }
 
+data class CardOutstandingItem(
+    val card: CreditCard,
+    val unpaidAmount: Double,
+    val unpaidBillCount: Int,
+    val currency: String = "BDT"
+)
+
 data class AccountsUiState(
     val summaries: List<AccountSummary> = emptyList(),
     val monthIn: Double = 0.0,
@@ -36,6 +47,13 @@ data class AccountsUiState(
     val prevMonthIn: Double = 0.0,
     val prevMonthOut: Double = 0.0,
     val totalBalance: Double = 0.0,
+    val assetsTotal: Double = 0.0,
+    val accountLiabilitiesTotal: Double = 0.0,
+    val cardLiabilityTotal: Double = 0.0,
+    val cardLiabilityCount: Int = 0,
+    val cardOutstandingItems: List<CardOutstandingItem> = emptyList(),
+    val allAccountTypes: List<AccountTypeConfig> = emptyList(),
+    val customAccountTypes: List<AccountTypeConfig> = emptyList(),
     val expensesByCategory: List<CategoryTotal> = emptyList(),
     val incomeByCategory: List<CategoryTotal> = emptyList(),
     val archivedAccounts: List<Account> = emptyList(),
@@ -47,7 +65,9 @@ data class AccountsUiState(
 class AccountsViewModel @Inject constructor(
     application: Application,
     private val accountRepository: AccountRepository,
-    private val preferenceManager: PreferenceManager
+    private val preferenceManager: PreferenceManager,
+    private val billRepository: BillRepository,
+    private val cardRepository: CardRepository
 ) : AndroidViewModel(application) {
 
     private val now = Calendar.getInstance()
@@ -64,16 +84,42 @@ class AccountsViewModel @Inject constructor(
             start to end
         }
 
+    private data class LedgerBundle(
+        val summaries: List<AccountSummary>,
+        val expenses: List<CategoryTotal>,
+        val income: List<CategoryTotal>,
+        val archived: List<Account>,
+        val transactions: List<AccountTransactionWithAccount>
+    )
+
+    private data class TypesAndCardsBundle(
+        val allTypes: List<AccountTypeConfig>,
+        val customTypes: List<AccountTypeConfig>,
+        val unpaidBills: List<com.finmagic.data.local.entity.BillWithCard>,
+        val cards: List<CreditCard>
+    )
+
     val uiState: StateFlow<AccountsUiState> =
         monthRange.flatMapLatest { (ms, me) ->
-            combine(
+            val ledgerFlow = combine(
                 accountRepository.observeSummaries(ms, me),
                 accountRepository.observeMonthlyExpenseByCategory(ms, me),
                 accountRepository.observeMonthlyIncomeByCategory(ms, me),
                 accountRepository.observeArchived(),
                 accountRepository.observeAllTransactionsWithAccount()
             ) { summaries, expenses, income, archived, transactions ->
-                val counted = summaries.filter { it.account.includeInTotal }
+                LedgerBundle(summaries, expenses, income, archived, transactions)
+            }
+            val metaFlow = combine(
+                preferenceManager.allAccountTypes,
+                preferenceManager.customAccountTypes,
+                billRepository.getUnpaidBills(),
+                cardRepository.getAllCards()
+            ) { allTypes, customTypes, unpaidBills, cards ->
+                TypesAndCardsBundle(allTypes, customTypes, unpaidBills, cards)
+            }
+            combine(ledgerFlow, metaFlow) { ledger, meta ->
+                val counted = ledger.summaries.filter { it.account.includeInTotal }
                 val currentMonthIn = counted.sumOf { it.monthIn }
                 val currentMonthOut = counted.sumOf { it.monthOut }
 
@@ -84,21 +130,46 @@ class AccountsViewModel @Inject constructor(
                 val prevStart = startOfMonthMillis(prevCal.get(Calendar.YEAR), prevCal.get(Calendar.MONTH))
                 val prevEnd = ms
 
-                val prevTransactions = transactions.filter { it.occurredAt >= prevStart && it.occurredAt < prevEnd }
+                val prevTransactions = ledger.transactions.filter { it.occurredAt >= prevStart && it.occurredAt < prevEnd }
                 val prevMonthIn = prevTransactions.filter { it.direction == AccountTransaction.DIRECTION_IN }.sumOf { it.amount }
                 val prevMonthOut = prevTransactions.filter { it.direction == AccountTransaction.DIRECTION_OUT }.sumOf { it.amount }
 
+                val assetsTotal = counted.filter { !it.account.isLiability }.sumOf { it.displayBalance }
+                val accountLiabilitiesTotal = counted.filter { it.account.isLiability }.sumOf { kotlin.math.abs(it.displayBalance) }
+
+                val unpaidByCard = meta.unpaidBills.groupBy { it.cardId }
+                val cardItems = meta.cards.map { card ->
+                    val cardBills = unpaidByCard[card.id].orEmpty()
+                    val unpaid = cardBills.sumOf { maxOf(0.0, it.totalDue - it.paidAmount) }
+                    CardOutstandingItem(
+                        card = card,
+                        unpaidAmount = unpaid,
+                        unpaidBillCount = cardBills.size,
+                        currency = card.creditLimitCurrency.ifBlank { "BDT" }
+                    )
+                }.sortedByDescending { it.unpaidAmount }
+
+                val cardLiabilityTotal = meta.unpaidBills.sumOf { maxOf(0.0, it.totalDue - it.paidAmount) }
+                val netBalance = assetsTotal - accountLiabilitiesTotal - cardLiabilityTotal
+
                 AccountsUiState(
-                    summaries = summaries,
+                    summaries = ledger.summaries,
                     monthIn = currentMonthIn,
                     monthOut = currentMonthOut,
                     prevMonthIn = prevMonthIn,
                     prevMonthOut = prevMonthOut,
-                    totalBalance = counted.sumOf { it.displayBalance },
-                    expensesByCategory = expenses.filter { it.total > 0.0 },
-                    incomeByCategory = income.filter { it.total > 0.0 },
-                    archivedAccounts = archived,
-                    recentTransactions = transactions
+                    totalBalance = netBalance,
+                    assetsTotal = assetsTotal,
+                    accountLiabilitiesTotal = accountLiabilitiesTotal,
+                    cardLiabilityTotal = cardLiabilityTotal,
+                    cardLiabilityCount = meta.cards.size,
+                    cardOutstandingItems = cardItems,
+                    allAccountTypes = meta.allTypes,
+                    customAccountTypes = meta.customTypes,
+                    expensesByCategory = ledger.expenses.filter { it.total > 0.0 },
+                    incomeByCategory = ledger.income.filter { it.total > 0.0 },
+                    archivedAccounts = ledger.archived,
+                    recentTransactions = ledger.transactions
                 )
             }
         }
@@ -139,6 +210,50 @@ class AccountsViewModel @Inject constructor(
 
     fun ensureCashAccount() {
         viewModelScope.launch { accountRepository.ensureCashAccount() }
+    }
+
+    fun createAccount(
+        name: String,
+        accountType: String,
+        isLiability: Boolean,
+        bankName: String = "",
+        accountMask: String = "",
+        currency: String = "BDT",
+        initialBalance: Double = 0.0,
+        includeInTotal: Boolean = true
+    ) {
+        viewModelScope.launch {
+            accountRepository.createManualAccount(
+                name = name,
+                accountType = accountType,
+                isLiability = isLiability,
+                bankName = bankName,
+                accountMask = accountMask,
+                currency = currency,
+                initialBalance = initialBalance,
+                includeInTotal = includeInTotal
+            )
+        }
+    }
+
+    fun addCustomAccountType(name: String, isLiability: Boolean) {
+        viewModelScope.launch { preferenceManager.addCustomAccountType(name, isLiability) }
+    }
+
+    fun removeCustomAccountType(name: String) {
+        viewModelScope.launch { preferenceManager.removeCustomAccountType(name) }
+    }
+
+    fun updateAccountDetails(
+        accountId: Long,
+        newName: String,
+        accountType: String,
+        isLiability: Boolean,
+        includeInTotal: Boolean
+    ) {
+        viewModelScope.launch {
+            accountRepository.updateAccountDetails(accountId, newName, accountType, isLiability, includeInTotal)
+        }
     }
 
     val categoryNicknames: StateFlow<Map<String, String>> =

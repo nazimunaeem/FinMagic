@@ -144,6 +144,75 @@ class AccountRepository @Inject constructor(
         }
     }
 
+    /** Creates a user-defined manual account (Savings, Deposit, Loan, Cash, or custom type). */
+    suspend fun createManualAccount(
+        name: String,
+        accountType: String,
+        isLiability: Boolean,
+        bankName: String = "",
+        accountMask: String = "",
+        currency: String = "BDT",
+        initialBalance: Double = 0.0,
+        includeInTotal: Boolean = true
+    ): Long? {
+        val trimmedName = name.trim()
+        if (trimmedName.isEmpty()) return null
+        val trimmedType = accountType.trim().ifBlank { Account.TYPE_SAVINGS }
+        val existingCash = if (trimmedType.equals(Account.TYPE_CASH, ignoreCase = true)) {
+            accountDao.getCashAccountOnce()
+        } else null
+        val kind = if (trimmedType.equals(Account.TYPE_CASH, ignoreCase = true) && existingCash == null) {
+            Account.KIND_CASH
+        } else {
+            Account.KIND_BANK
+        }
+        val effectiveMask = when {
+            kind == Account.KIND_CASH -> Account.CASH_MASK
+            accountMask.isNotBlank() -> accountMask.trim()
+            else -> "MANUAL-${System.currentTimeMillis()}"
+        }
+        return database.withTransaction {
+            val insertedId = accountDao.insert(
+                Account(
+                    name = trimmedName,
+                    kind = kind,
+                    bankName = bankName.trim(),
+                    accountMask = effectiveMask,
+                    currency = currency.trim().ifBlank { "BDT" },
+                    includeInTotal = includeInTotal,
+                    accountType = trimmedType,
+                    isLiability = isLiability
+                )
+            )
+            val resolvedId = if (insertedId > 0L) {
+                insertedId
+            } else {
+                accountDao.findByInstitutionAndMask(bankName.trim(), effectiveMask)?.id
+            } ?: return@withTransaction null
+
+            if (kotlin.math.abs(initialBalance) >= 0.01) {
+                val direction = if (initialBalance >= 0) {
+                    AccountTransaction.DIRECTION_IN
+                } else {
+                    AccountTransaction.DIRECTION_OUT
+                }
+                txnDao.insert(
+                    AccountTransaction(
+                        accountId = resolvedId,
+                        direction = direction,
+                        amount = kotlin.math.abs(initialBalance),
+                        balanceAfter = if (kind != Account.KIND_CASH) initialBalance else null,
+                        occurredAt = System.currentTimeMillis(),
+                        category = "DirectSet",
+                        counterparty = "Opening Balance",
+                        isManual = true
+                    )
+                )
+            }
+            resolvedId
+        }
+    }
+
     // ---------------------------------------------------------------- storage
 
     /**
@@ -476,6 +545,28 @@ class AccountRepository @Inject constructor(
     /** Toggles whether the account's balance counts toward the aggregated total. */
     suspend fun setIncludeInTotal(accountId: Long, value: Boolean) {
         accountDao.setIncludeInTotal(accountId, value)
+    }
+
+    /** Updates an account's type and liability flag. */
+    suspend fun updateAccountType(accountId: Long, accountType: String, isLiability: Boolean) {
+        accountDao.updateType(accountId, accountType.trim(), isLiability)
+    }
+
+    /** Updates name, type, liability flag, and total-inclusion in one call. */
+    suspend fun updateAccountDetails(
+        accountId: Long,
+        newName: String,
+        accountType: String,
+        isLiability: Boolean,
+        includeInTotal: Boolean
+    ): Boolean {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) return false
+        accountDao.findByIdOnce(accountId) ?: return false
+        database.withTransaction {
+            accountDao.updateDetails(accountId, trimmed, accountType.trim(), isLiability, includeInTotal)
+        }
+        return true
     }
 
     /**

@@ -127,8 +127,8 @@ fun CardDetailScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentPadding = PaddingValues(bottom = 88.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentPadding = PaddingValues(top = 4.dp, bottom = 80.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             // Summary Header Card
             item {
@@ -158,7 +158,30 @@ fun CardDetailScreen(
                 )
             }
 
-            // Card Transactions (POS / Spend entries)
+            // 1. Unpaid Active Bills FIRST
+            if (unpaidBills.isNotEmpty()) {
+                item {
+                    SectionHeader(
+                        title = "UNPAID BILLS",
+                        count = unpaidBills.size,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                items(unpaidBills, key = { "unpaid_${it.billId}" }) { bill ->
+                    BillCard(
+                        bill = bill,
+                        onMarkPaid = { viewModel.markBillAsPaid(bill.billId) },
+                        onUpdatePayment = { viewModel.updatePartialPayment(bill.billId, it) },
+                        onMarkUnpaid = { viewModel.markBillAsUnpaid(bill.billId) },
+                        onEditBill = { total, min, due ->
+                            viewModel.editBill(bill.billId, total, min, due)
+                        },
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
+            }
+
+            // 2. Card Transactions (POS / Spend entries) & Payments Received
             if (cardTransactions.isNotEmpty()) {
                 item {
                     SectionHeader(
@@ -178,34 +201,27 @@ fun CardDetailScreen(
                 }
             }
 
-            // Unpaid Active Bills
-            if (unpaidBills.isNotEmpty()) {
+            if (payments.isNotEmpty()) {
                 item {
                     SectionHeader(
-                        title = "ACTIVE BILLS",
-                        count = unpaidBills.size,
-                        color = MaterialTheme.colorScheme.primary
+                        title = "PAYMENTS RECEIVED",
+                        count = payments.size,
+                        color = StatusSafe
                     )
                 }
-                items(unpaidBills, key = { "unpaid_${it.billId}" }) { bill ->
-                    BillCard(
-                        bill = bill,
-                        onMarkPaid = { viewModel.markBillAsPaid(bill.billId) },
-                        onUpdatePayment = { viewModel.updatePartialPayment(bill.billId, it) },
-                        onMarkUnpaid = { viewModel.markBillAsUnpaid(bill.billId) },
-                        onEditBill = { total, min, due ->
-                            viewModel.editBill(bill.billId, total, min, due)
-                        },
+                items(payments, key = { "payment_${it.id}" }) { payment ->
+                    PaymentHistoryCard(
+                        payment = payment,
                         modifier = Modifier.padding(horizontal = 16.dp)
                     )
                 }
             }
 
-            // Paid Bill History
+            // 3. Paid Bills LAST
             if (paidBills.isNotEmpty()) {
                 item {
                     SectionHeader(
-                        title = "BILL HISTORY",
+                        title = "PAID BILLS",
                         count = paidBills.size,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -219,23 +235,6 @@ fun CardDetailScreen(
                         onEditBill = { total, min, due ->
                             viewModel.editBill(bill.billId, total, min, due)
                         },
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
-                }
-            }
-
-            // Payment History (SMS payments)
-            if (payments.isNotEmpty()) {
-                item {
-                    SectionHeader(
-                        title = "PAYMENTS RECEIVED",
-                        count = payments.size,
-                        color = StatusSafe
-                    )
-                }
-                items(payments, key = { "payment_${it.id}" }) { payment ->
-                    PaymentHistoryCard(
-                        payment = payment,
                         modifier = Modifier.padding(horizontal = 16.dp)
                     )
                 }
@@ -360,11 +359,11 @@ private fun CardSummaryHeader(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(20.dp),
+            .padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
-        Column(modifier = Modifier.padding(20.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -394,7 +393,7 @@ private fun CardSummaryHeader(
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                         )
                     }
                 }
@@ -402,7 +401,7 @@ private fun CardSummaryHeader(
 
             if (card != null && card.creditLimit > 0) {
                 val utilizationValue = utilization?.coerceIn(0.0, 1.0) ?: 0.0
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
@@ -411,7 +410,7 @@ private fun CardSummaryHeader(
                     ),
                     elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
+                    Column(modifier = Modifier.padding(10.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -429,17 +428,17 @@ private fun CardSummaryHeader(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         LinearProgressIndicator(
                             progress = { utilizationValue.toFloat() },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(8.dp)
-                                .clip(RoundedCornerShape(4.dp)),
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
                             color = if (utilizationValue > 0.8) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                             trackColor = MaterialTheme.colorScheme.surfaceVariant
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = if (totalUnpaid > 0) {
                                 "${card.limitSymbol()}${String.format(Locale.US, "%,.2f", card.creditLimit - totalUnpaid)} available"
@@ -454,7 +453,7 @@ private fun CardSummaryHeader(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Bottom,

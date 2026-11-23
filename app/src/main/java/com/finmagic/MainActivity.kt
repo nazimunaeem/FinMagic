@@ -1,7 +1,9 @@
 package com.finmagic
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -12,19 +14,25 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -38,7 +46,11 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import com.finmagic.data.update.GitHubUpdateChecker
+import com.finmagic.data.update.UpdateCheckState
+import com.finmagic.data.web.LocalWebServer
 import com.finmagic.notification.DueDateReminderScheduler
 import com.finmagic.notification.SmsScheduler
 import com.finmagic.data.local.AppThemeMode
@@ -64,6 +76,12 @@ class MainActivity : ComponentActivity() {
     @javax.inject.Inject
     lateinit var preferenceManager: PreferenceManager
 
+    @javax.inject.Inject
+    lateinit var localWebServer: LocalWebServer
+
+    @javax.inject.Inject
+    lateinit var gitHubUpdateChecker: GitHubUpdateChecker
+
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -81,6 +99,18 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         requestPermissions()
+
+        lifecycleScope.launch {
+            if (preferenceManager.webPortalAutoStart.first()) {
+                val port = preferenceManager.webPortalPort.first()
+                localWebServer.start(port)
+            }
+        }
+        lifecycleScope.launch {
+            if (preferenceManager.autoUpdateCheckEnabled.first()) {
+                gitHubUpdateChecker.checkForUpdates(manual = false)
+            }
+        }
 
         setContent {
             val themeMode by preferenceManager.themeMode.collectAsStateWithLifecycle(initialValue = AppThemeMode.LIGHT)
@@ -114,7 +144,10 @@ class MainActivity : ComponentActivity() {
             }
 
             FinMagicTheme(darkTheme = darkTheme) {
-                MainApp()
+                MainApp(
+                    preferenceManager = preferenceManager,
+                    gitHubUpdateChecker = gitHubUpdateChecker
+                )
             }
         }
     }
@@ -154,16 +187,26 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainApp() {
+fun MainApp(
+    preferenceManager: PreferenceManager,
+    gitHubUpdateChecker: GitHubUpdateChecker
+) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val updateState by gitHubUpdateChecker.state.collectAsStateWithLifecycle()
+    val skippedTag by preferenceManager.skippedUpdateTag.collectAsStateWithLifecycle(initialValue = null)
 
     // Sub-tab selection per section, hoisted here so it survives being covered by
     // detail screens (back restores it), while a bottom-bar tap force-resets it to
     // the default sub-tab (Accounts -> History, Cards -> Dashboard).
     var accountsInitialTab by remember { mutableIntStateOf(0) }
     var cardsInitialTab by remember { mutableIntStateOf(0) }
+    var homeHistoryResetTick by remember { mutableIntStateOf(0) }
+    var lastHomeTapMs by remember { mutableLongStateOf(0L) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -184,6 +227,24 @@ fun MainApp() {
                         label = { Text(screen.title) },
                         selected = selected,
                         onClick = {
+                            if (screen.route == Screen.Home.route) {
+                                val now = System.currentTimeMillis()
+                                val isDoubleTap = now - lastHomeTapMs <= 450L
+                                lastHomeTapMs = if (isDoubleTap) 0L else now
+                                if (isDoubleTap) {
+                                    homeHistoryResetTick += 1
+                                    navController.navigate(Screen.Home.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            inclusive = false
+                                        }
+                                        launchSingleTop = true
+                                    }
+                                    return@NavigationBarItem
+                                }
+                            } else {
+                                lastHomeTapMs = 0L
+                            }
+
                             val inSection = currentDestination?.hierarchy
                                 ?.any { it.route == screen.route } == true
                             if (!inSection) {
@@ -214,7 +275,8 @@ fun MainApp() {
                     },
                     onCardClick = { cardId ->
                         navController.navigate("cards/$cardId")
-                    }
+                    },
+                    historyResetTick = homeHistoryResetTick
                 )
             }
 
@@ -273,5 +335,49 @@ fun MainApp() {
                 SmsReviewScreen(onBack = { navController.popBackStack() })
             }
         }
+    }
+
+    val availableUpdate = (updateState as? UpdateCheckState.UpdateAvailable)?.release
+    if (availableUpdate != null && availableUpdate.tagName != skippedTag) {
+        AlertDialog(
+            onDismissRequest = { gitHubUpdateChecker.dismissUpdate() },
+            title = { Text("Update Available (${availableUpdate.tagName})") },
+            text = {
+                Text(
+                    text = buildString {
+                        append(availableUpdate.title)
+                        if (availableUpdate.releaseNotes.isNotBlank()) {
+                            append("\n\n")
+                            append(availableUpdate.releaseNotes.take(350))
+                        }
+                    }
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val url = availableUpdate.apkDownloadUrl ?: availableUpdate.htmlUrl
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        }
+                        gitHubUpdateChecker.dismissUpdate()
+                    }
+                ) {
+                    Text("Download")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            preferenceManager.setSkippedUpdateTag(availableUpdate.tagName)
+                            gitHubUpdateChecker.dismissUpdate()
+                        }
+                    }
+                ) {
+                    Text("Skip")
+                }
+            }
+        )
     }
 }

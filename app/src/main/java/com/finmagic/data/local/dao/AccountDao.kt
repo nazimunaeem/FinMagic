@@ -40,6 +40,12 @@ interface AccountDao {
     @Query("UPDATE accounts SET includeInTotal = :value WHERE id = :id")
     suspend fun setIncludeInTotal(id: Long, value: Boolean)
 
+    @Query("UPDATE accounts SET accountType = :accountType, isLiability = :isLiability WHERE id = :id")
+    suspend fun updateType(id: Long, accountType: String, isLiability: Boolean)
+
+    @Query("UPDATE accounts SET name = :name, accountType = :accountType, isLiability = :isLiability, includeInTotal = :includeInTotal WHERE id = :id")
+    suspend fun updateDetails(id: Long, name: String, accountType: String, isLiability: Boolean, includeInTotal: Boolean)
+
     /** Cascades to account_transactions (FK ON DELETE CASCADE). */
     @Query("DELETE FROM accounts WHERE id = :id")
     suspend fun deleteById(id: Long)

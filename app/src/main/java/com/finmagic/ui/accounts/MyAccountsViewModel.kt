@@ -3,6 +3,8 @@ package com.finmagic.ui.accounts
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.finmagic.data.local.AccountTypeConfig
+import com.finmagic.data.local.PreferenceManager
 import com.finmagic.data.local.entity.AccountSummary
 import com.finmagic.data.repository.AccountRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -17,7 +19,8 @@ import javax.inject.Inject
 @HiltViewModel
 class MyAccountsViewModel @Inject constructor(
     application: Application,
-    private val accountRepository: AccountRepository
+    private val accountRepository: AccountRepository,
+    private val preferenceManager: PreferenceManager
 ) : AndroidViewModel(application) {
 
     private val monthStart: Long = Calendar.getInstance().apply {
@@ -32,8 +35,24 @@ class MyAccountsViewModel @Inject constructor(
         accountRepository.observeSummaries(monthStart)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val allAccountTypes: StateFlow<List<AccountTypeConfig>> =
+        preferenceManager.allAccountTypes
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     fun renameAccount(accountId: Long, newName: String) {
         viewModelScope.launch { accountRepository.renameAccount(accountId, newName) }
+    }
+
+    fun updateAccountDetails(
+        accountId: Long,
+        newName: String,
+        accountType: String,
+        isLiability: Boolean,
+        includeInTotal: Boolean
+    ) {
+        viewModelScope.launch {
+            accountRepository.updateAccountDetails(accountId, newName, accountType, isLiability, includeInTotal)
+        }
     }
 
     fun setIncludeInTotal(accountId: Long, value: Boolean) {

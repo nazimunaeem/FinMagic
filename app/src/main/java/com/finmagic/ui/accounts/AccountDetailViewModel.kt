@@ -4,9 +4,10 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
+import com.finmagic.data.local.AccountTypeConfig
+import com.finmagic.data.local.PreferenceManager
 import com.finmagic.data.local.entity.Account
 import com.finmagic.data.local.entity.AccountTransaction
-import com.finmagic.data.local.PreferenceManager
 import com.finmagic.data.repository.AccountRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,6 +59,10 @@ class AccountDetailViewModel @Inject constructor(
     val categoryNicknames: StateFlow<Map<String, String>> =
         preferenceManager.categoryNicknames
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    val allAccountTypes: StateFlow<List<AccountTypeConfig>> =
+        preferenceManager.allAccountTypes
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _allAccounts = MutableStateFlow<List<Account>>(emptyList())
     val allAccounts: StateFlow<List<Account>> = _allAccounts.asStateFlow()
@@ -167,6 +172,19 @@ class AccountDetailViewModel @Inject constructor(
         viewModelScope.launch {
             accountRepository.setIncludeInTotal(accountId, value)
             _account.value = accountRepository.getAccountOnce(accountId)
+        }
+    }
+
+    fun updateAccountDetails(
+        newName: String,
+        accountType: String,
+        isLiability: Boolean,
+        includeInTotal: Boolean
+    ) {
+        viewModelScope.launch {
+            if (accountRepository.updateAccountDetails(accountId, newName, accountType, isLiability, includeInTotal)) {
+                _account.value = accountRepository.getAccountOnce(accountId)
+            }
         }
     }
 

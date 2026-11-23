@@ -1,7 +1,12 @@
 package com.finmagic.data.sms
 
+import com.finmagic.data.local.dao.CardPaymentDao
+import com.finmagic.data.local.dao.CardTransactionDao
+import com.finmagic.data.local.dao.CreditCardDao
 import com.finmagic.data.local.dao.SmsRuleApplicationDao
 import com.finmagic.data.local.dao.SmsTeachingRuleDao
+import com.finmagic.data.local.entity.CardPayment
+import com.finmagic.data.local.entity.CardTransaction
 import com.finmagic.data.local.entity.SmsRecord
 import com.finmagic.data.local.entity.SmsRuleApplication
 import com.finmagic.data.local.entity.SmsTeachingRule
@@ -46,7 +51,10 @@ data class AccountTemplate(
 class SmsTeachingEngine @Inject constructor(
     private val ruleDao: SmsTeachingRuleDao,
     private val ruleApplicationDao: SmsRuleApplicationDao,
-    private val accountRepository: AccountRepository
+    private val accountRepository: AccountRepository,
+    private val creditCardDao: CreditCardDao,
+    private val cardTransactionDao: CardTransactionDao,
+    private val cardPaymentDao: CardPaymentDao
 ) {
     /**
      * Attempts to match and apply the first matching rule for [record].
@@ -119,7 +127,7 @@ class SmsTeachingEngine @Inject constructor(
                 bestScore = score
                 bestMatch = rule
             } else if (score == bestScore && bestMatch != null) {
-                if (bestMatch.action != rule.action || bestMatch.accountId != rule.accountId) {
+                if (bestMatch.action != rule.action || bestMatch.accountId != rule.accountId || bestMatch.cardId != rule.cardId) {
                     return null
                 }
             }
@@ -213,6 +221,42 @@ class SmsTeachingEngine @Inject constructor(
                 )
                 val txnId = accountRepository.storeTransferPair(fromEntry, toEntry, record.body, record.id)
                 (txnId != null) to txnId
+            }
+
+            SmsTeachingRule.ACTION_CARD_DEBIT -> {
+                val amount = extracted.amount ?: return false to null
+                val cardId = rule.cardId ?: return false to null
+                val card = creditCardDao.getCardById(cardId) ?: return false to null
+                cardTransactionDao.deleteBySmsBody(record.body)
+                val insertedId = cardTransactionDao.insert(
+                    CardTransaction(
+                        cardTail = card.cardLast4,
+                        bankName = card.bankName,
+                        merchant = extracted.counterparty?.takeIf { it.isNotBlank() } ?: "Card Spend",
+                        amount = amount,
+                        occurredAt = extracted.date ?: record.timestamp,
+                        balanceAfter = extracted.balance,
+                        category = rule.category?.takeIf { it.isNotBlank() },
+                        smsBody = record.body
+                    )
+                )
+                (insertedId > 0L) to (if (insertedId > 0L) insertedId else null)
+            }
+
+            SmsTeachingRule.ACTION_CARD_CREDIT -> {
+                val amount = extracted.amount ?: return false to null
+                val cardId = rule.cardId ?: return false to null
+                val card = creditCardDao.getCardById(cardId) ?: return false to null
+                val insertedId = cardPaymentDao.insert(
+                    CardPayment(
+                        cardTail = card.cardLast4,
+                        amountBdt = amount,
+                        amountUsd = 0.0,
+                        paidAt = extracted.date ?: record.timestamp,
+                        smsBody = record.body
+                    )
+                )
+                (insertedId > 0L) to (if (insertedId > 0L) insertedId else null)
             }
 
             SmsTeachingRule.ACTION_BALANCE_ONLY -> {
@@ -405,7 +449,7 @@ class SmsTeachingEngine @Inject constructor(
                     bestScore = score
                     bestMatch = rule
                 } else if (score == bestScore && bestMatch != null) {
-                    if (bestMatch.action != rule.action || bestMatch.accountId != rule.accountId) {
+                    if (bestMatch.action != rule.action || bestMatch.accountId != rule.accountId || bestMatch.cardId != rule.cardId) {
                         return null
                     }
                 }

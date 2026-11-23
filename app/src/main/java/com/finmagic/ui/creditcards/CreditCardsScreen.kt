@@ -10,6 +10,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -131,24 +132,17 @@ fun CreditCardsScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            SingleChoiceSegmentedButtonRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-            ) {
-                SegmentedButton(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0; onTabSelected(0) },
-                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                    modifier = Modifier.testTag("cards_tab_bills")
-                ) { Text("Bills") }
-                SegmentedButton(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1; onTabSelected(1) },
-                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                    modifier = Modifier.testTag("cards_tab_my_cards")
-                ) { Text("My Cards") }
-            }
+            CardsTabBar(
+                selectedTab = selectedTab,
+                unpaidBillCount = state.unpaidCount,
+                overdueCount = state.overdueCount,
+                cardCount = state.cards.size,
+                onSelect = { tab ->
+                    selectedTab = tab
+                    onTabSelected(tab)
+                },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+            )
 
             PullToRefreshBox(
                 isRefreshing = state.isLoading,
@@ -162,30 +156,19 @@ fun CreditCardsScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 LazyColumn(
-                    contentPadding = PaddingValues(bottom = 32.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(top = 4.dp, bottom = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     if (selectedTab == 0) {
-                        // DASHBOARD TAB
+                        // BILLS TAB: Unpaid active bills at the top with full details
                         if (!hasSmsPermission) {
                             item {
                                 SmsPermissionCard(
                                     onRequestPermission = {
                                         permissionLauncher.launch(Manifest.permission.READ_SMS)
                                     },
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                                )
-                            }
-                        }
-
-                        if (state.nextDue != null) {
-                            item {
-                                NextDueHero(
-                                    bill = state.nextDue!!,
-                                    onPay = { heroPayBill = state.nextDue!! },
-                                    onClick = { onCardClick(state.nextDue!!.cardId) },
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                                    modifier = Modifier.padding(horizontal = 16.dp)
                                 )
                             }
                         }
@@ -194,7 +177,122 @@ fun CreditCardsScreen(
                             item {
                                 CreditCardTeachingCard(
                                     onAddManual = { showAddCardDialog = true },
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
+                            }
+                        }
+
+                        if (state.overdueBills.isNotEmpty()) {
+                            item {
+                                SectionHeader(
+                                    title = "OVERDUE",
+                                    count = state.overdueBills.size,
+                                    color = StatusOverdue
+                                )
+                            }
+                            items(state.overdueBills, key = { "overdue_${it.billId}" }) { bill ->
+                                BillCard(
+                                    bill = bill,
+                                    onMarkPaid = { viewModel.markBillAsPaid(bill.billId) },
+                                    onUpdatePayment = { viewModel.updatePartialPayment(bill.billId, it) },
+                                    onMarkUnpaid = { viewModel.markBillAsUnpaid(bill.billId) },
+                                    onEditBill = { total, min, due ->
+                                        viewModel.editBill(bill.billId, total, min, due)
+                                    },
+                                    onCardClick = { onCardClick(bill.cardId) },
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
+                            }
+                        }
+
+                        if (state.dueSoonBills.isNotEmpty()) {
+                            item {
+                                SectionHeader(
+                                    title = "DUE SOON",
+                                    count = state.dueSoonBills.size,
+                                    color = StatusDueSoon
+                                )
+                            }
+                            items(state.dueSoonBills, key = { "soon_${it.billId}" }) { bill ->
+                                BillCard(
+                                    bill = bill,
+                                    onMarkPaid = { viewModel.markBillAsPaid(bill.billId) },
+                                    onUpdatePayment = { viewModel.updatePartialPayment(bill.billId, it) },
+                                    onMarkUnpaid = { viewModel.markBillAsUnpaid(bill.billId) },
+                                    onEditBill = { total, min, due ->
+                                        viewModel.editBill(bill.billId, total, min, due)
+                                    },
+                                    onCardClick = { onCardClick(bill.cardId) },
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
+                            }
+                        }
+
+                        if (state.upcomingBills.isNotEmpty()) {
+                            item {
+                                SectionHeader(
+                                    title = "UPCOMING",
+                                    count = state.upcomingBills.size,
+                                    color = StatusUpcoming
+                                )
+                            }
+                            items(state.upcomingBills, key = { "upcoming_${it.billId}" }) { bill ->
+                                BillCard(
+                                    bill = bill,
+                                    onMarkPaid = { viewModel.markBillAsPaid(bill.billId) },
+                                    onUpdatePayment = { viewModel.updatePartialPayment(bill.billId, it) },
+                                    onMarkUnpaid = { viewModel.markBillAsUnpaid(bill.billId) },
+                                    onEditBill = { total, min, due ->
+                                        viewModel.editBill(bill.billId, total, min, due)
+                                    },
+                                    onCardClick = { onCardClick(bill.cardId) },
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
+                            }
+                        }
+
+                        if (state.safeBills.isNotEmpty()) {
+                            item {
+                                SectionHeader(
+                                    title = "ACTIVE UNPAID",
+                                    count = state.safeBills.size,
+                                    color = StatusSafe
+                                )
+                            }
+                            items(state.safeBills, key = { "safe_${it.billId}" }) { bill ->
+                                BillCard(
+                                    bill = bill,
+                                    onMarkPaid = { viewModel.markBillAsPaid(bill.billId) },
+                                    onUpdatePayment = { viewModel.updatePartialPayment(bill.billId, it) },
+                                    onMarkUnpaid = { viewModel.markBillAsUnpaid(bill.billId) },
+                                    onEditBill = { total, min, due ->
+                                        viewModel.editBill(bill.billId, total, min, due)
+                                    },
+                                    onCardClick = { onCardClick(bill.cardId) },
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
+                            }
+                        }
+
+                        if (state.previousMonthsBills.isNotEmpty()) {
+                            item {
+                                SectionHeader(
+                                    title = "PREVIOUS MONTHS",
+                                    count = state.previousMonthsBills.size,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            items(state.previousMonthsBills, key = { "prev_${it.billId}" }) { bill ->
+                                BillCard(
+                                    bill = bill,
+                                    onMarkPaid = { viewModel.markBillAsPaid(bill.billId) },
+                                    onUpdatePayment = { viewModel.updatePartialPayment(bill.billId, it) },
+                                    onMarkUnpaid = { viewModel.markBillAsUnpaid(bill.billId) },
+                                    onEditBill = { total, min, due ->
+                                        viewModel.editBill(bill.billId, total, min, due)
+                                    },
+                                    onCardClick = { onCardClick(bill.cardId) },
+                                    modifier = Modifier.padding(horizontal = 16.dp)
                                 )
                             }
                         }
@@ -232,110 +330,10 @@ fun CreditCardsScreen(
                             }
                         }
 
-                        if (state.overdueBills.isNotEmpty()) {
-                            item {
-                                SectionHeader(
-                                    title = "OVERDUE",
-                                    count = state.overdueBills.size,
-                                    color = StatusOverdue
-                                )
-                            }
-                            items(state.overdueBills, key = { "overdue_${it.billId}" }) { bill ->
-                                BillCard(
-                                    bill = bill,
-                                    onMarkPaid = { viewModel.markBillAsPaid(bill.billId) },
-                                    onUpdatePayment = { viewModel.updatePartialPayment(bill.billId, it) },
-                                    onCardClick = { onCardClick(bill.cardId) },
-                                    modifier = Modifier
-                                        .padding(horizontal = 16.dp)
-                                )
-                            }
-                        }
-
-                        if (state.dueSoonBills.isNotEmpty()) {
-                            item {
-                                SectionHeader(
-                                    title = "DUE SOON",
-                                    count = state.dueSoonBills.size,
-                                    color = StatusDueSoon
-                                )
-                            }
-                            items(state.dueSoonBills, key = { "soon_${it.billId}" }) { bill ->
-                                BillCard(
-                                    bill = bill,
-                                    onMarkPaid = { viewModel.markBillAsPaid(bill.billId) },
-                                    onUpdatePayment = { viewModel.updatePartialPayment(bill.billId, it) },
-                                    onCardClick = { onCardClick(bill.cardId) },
-                                    modifier = Modifier
-                                        .padding(horizontal = 16.dp)
-                                )
-                            }
-                        }
-
-                        if (state.upcomingBills.isNotEmpty()) {
-                            item {
-                                SectionHeader(
-                                    title = "UPCOMING",
-                                    count = state.upcomingBills.size,
-                                    color = StatusUpcoming
-                                )
-                            }
-                            items(state.upcomingBills, key = { "upcoming_${it.billId}" }) { bill ->
-                                BillCard(
-                                    bill = bill,
-                                    onMarkPaid = { viewModel.markBillAsPaid(bill.billId) },
-                                    onUpdatePayment = { viewModel.updatePartialPayment(bill.billId, it) },
-                                    onCardClick = { onCardClick(bill.cardId) },
-                                    modifier = Modifier
-                                        .padding(horizontal = 16.dp)
-                                )
-                            }
-                        }
-
-                        if (state.safeBills.isNotEmpty()) {
-                            item {
-                                SectionHeader(
-                                    title = "SAFE",
-                                    count = state.safeBills.size,
-                                    color = StatusSafe
-                                )
-                            }
-                            items(state.safeBills, key = { "safe_${it.billId}" }) { bill ->
-                                BillCard(
-                                    bill = bill,
-                                    onMarkPaid = { viewModel.markBillAsPaid(bill.billId) },
-                                    onUpdatePayment = { viewModel.updatePartialPayment(bill.billId, it) },
-                                    onCardClick = { onCardClick(bill.cardId) },
-                                    modifier = Modifier
-                                        .padding(horizontal = 16.dp)
-                                )
-                            }
-                        }
-
-                        if (state.previousMonthsBills.isNotEmpty()) {
-                            item {
-                                SectionHeader(
-                                    title = "PREVIOUS MONTHS",
-                                    count = state.previousMonthsBills.size,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            items(state.previousMonthsBills, key = { "prev_${it.billId}" }) { bill ->
-                                BillCard(
-                                    bill = bill,
-                                    onMarkPaid = { viewModel.markBillAsPaid(bill.billId) },
-                                    onUpdatePayment = { viewModel.updatePartialPayment(bill.billId, it) },
-                                    onCardClick = { onCardClick(bill.cardId) },
-                                    modifier = Modifier
-                                        .padding(horizontal = 16.dp)
-                                )
-                            }
-                        }
-
                         if (state.paidHistory.isNotEmpty() || state.recentPayments.isNotEmpty()) {
                             item {
                                 SectionHeader(
-                                    title = "HISTORY & PAYMENTS",
+                                    title = "PAID BILLS & PAYMENTS",
                                     count = state.paidHistory.size + state.recentPayments.size,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -356,13 +354,13 @@ fun CreditCardsScreen(
                                                 viewModel.editBill(bill.billId, total, min, due)
                                             },
                                             onCardClick = { onCardClick(bill.cardId) },
-                                            modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp)
+                                            modifier = Modifier.padding(horizontal = 16.dp)
                                         )
                                     }
                                     is TimelineEntry.PaymentEntry -> {
                                         PaymentReceivedRow(
                                             payment = entry.payment,
-                                            modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp)
+                                            modifier = Modifier.padding(horizontal = 16.dp)
                                         )
                                     }
                                 }
@@ -716,7 +714,7 @@ private fun CardItem(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp)
+                .padding(horizontal = 14.dp, vertical = 12.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -724,7 +722,7 @@ private fun CardItem(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(38.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(bankBrandGradient(card.bankName)),
                     contentAlignment = Alignment.Center
@@ -732,11 +730,11 @@ private fun CardItem(
                     Icon(
                         Icons.Default.CreditCard,
                         contentDescription = null,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
                         tint = Color.White
                     )
                 }
-                Spacer(modifier = Modifier.width(14.dp))
+                Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = card.displayName,
@@ -745,7 +743,6 @@ private fun CardItem(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = card.maskedCard,
                         style = MaterialTheme.typography.bodySmall,
@@ -762,13 +759,13 @@ private fun CardItem(
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                     )
                 }
             }
 
             if (utilization != null) {
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
@@ -782,7 +779,7 @@ private fun CardItem(
                         color = if (utilization > 0.8) StatusOverdue else MaterialTheme.colorScheme.primary,
                         trackColor = MaterialTheme.colorScheme.surfaceVariant
                     )
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "${card.limitSymbol()}${String.format(Locale.US, "%,.0f", card.creditLimit)} • ${(utilization * 100).toInt()}%",
                         style = MaterialTheme.typography.labelSmall,
@@ -791,7 +788,7 @@ private fun CardItem(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Bottom,
@@ -804,13 +801,12 @@ private fun CardItem(
                     Text(
                         text = "Outstanding ${formatCurrencyMap(stats.unpaidByCurrency)} • Spent ৳${String.format(Locale.US, "%,.2f", stats.spentAmount)}",
                         style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Medium,
-                        color = if (stats.overdueBillCount > 0) StatusOverdue
-                        else if (stats.totalUnpaid > 0) MaterialTheme.colorScheme.onSurface
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (stats.totalUnpaid > 0) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "Bills ${formatCurrencyMap(stats.billedByCurrency)} • Paid ${formatCurrencyMap(stats.paidByCurrency)} ($periodLabel)",
+                        text = "Bill ${formatCurrencyMap(stats.billedByCurrency)} • Paid ${formatCurrencyMap(stats.paidByCurrency)} ($periodLabel)",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -826,18 +822,20 @@ private fun CardItem(
                         },
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
-                        color = if (stats.overdueBillCount > 0) StatusOverdue
-                        else if (stats.unpaidBillCount > 0) MaterialTheme.colorScheme.primary
-                        else StatusSafe
+                        color = if (stats.unpaidBillCount > 0) MaterialTheme.colorScheme.error else StatusSafe
                     )
                     if (onPayBill != null) {
                         Spacer(modifier = Modifier.height(4.dp))
-                        FilledTonalButton(
+                        Button(
                             onClick = onPayBill,
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error,
+                                contentColor = Color.White
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
-                                .defaultMinSize(minHeight = 40.dp)
+                                .defaultMinSize(minHeight = 36.dp)
                                 .testTag("card_pay_bill_${card.id}")
                         ) {
                             Icon(
@@ -846,7 +844,7 @@ private fun CardItem(
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Pay Bill", style = MaterialTheme.typography.labelSmall)
+                            Text("Pay Bill", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -922,88 +920,120 @@ private fun CardSummaryRowCard(
 }
 
 @Composable
-private fun NextDueHero(
-    bill: BillWithCard,
-    onPay: () -> Unit,
+private fun CardsTabBar(
+    selectedTab: Int,
+    unpaidBillCount: Int,
+    overdueCount: Int,
+    cardCount: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            CardsTabPill(
+                title = "Bills",
+                icon = Icons.Default.ReceiptLong,
+                badge = if (unpaidBillCount > 0) unpaidBillCount.toString() else null,
+                badgeDanger = overdueCount > 0 || unpaidBillCount > 0,
+                selected = selectedTab == 0,
+                onClick = { onSelect(0) },
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("cards_tab_bills")
+            )
+            CardsTabPill(
+                title = "My Cards",
+                icon = Icons.Default.CreditCard,
+                badge = if (cardCount > 0) cardCount.toString() else null,
+                badgeDanger = false,
+                selected = selectedTab == 1,
+                onClick = { onSelect(1) },
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("cards_tab_my_cards")
+            )
+        }
+    }
+}
+
+@Composable
+private fun CardsTabPill(
+    title: String,
+    icon: ImageVector,
+    badge: String?,
+    badgeDanger: Boolean,
+    selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val days = bill.daysUntilDue
-    val isOverdue = days < 0
-    val minSymbol = when (bill.currency.uppercase()) {
-        "USD" -> "$"
-        "BDT", "TK" -> "৳"
-        else -> bill.currency
-    }
-    val formattedMin = "$minSymbol${String.format(Locale.US, "%,.2f", bill.minDue)}"
-    Card(
+    val containerColor = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
+    val contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Surface(
         modifier = modifier
-            .fillMaxWidth()
+            .height(44.dp)
+            .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        shape = RoundedCornerShape(12.dp),
+        color = containerColor,
+        tonalElevation = if (selected) 2.dp else 0.dp
     ) {
-        Box(
+        Row(
             modifier = Modifier
-                .background(
-                    Brush.linearGradient(
-                        listOf(
-                            MaterialTheme.colorScheme.primary,
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
-                        )
-                    )
-                )
-                .fillMaxWidth()
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
         ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Text(
-                    text = if (isOverdue) "OVERDUE PAYMENT" else "NEXT PAYMENT DUE",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = bill.formattedRemaining,
-                    style = if (bill.formattedRemaining.length > 14) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = bill.displayName,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = if (isOverdue) "${-days}d overdue" else "${days}d left",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (isOverdue) Color(0xFFFF8A80) else MaterialTheme.colorScheme.onPrimary
-                    )
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                color = contentColor,
+                maxLines = 1
+            )
+            if (badge != null) {
+                Spacer(modifier = Modifier.width(6.dp))
+                val badgeBg = when {
+                    badgeDanger -> MaterialTheme.colorScheme.error
+                    selected -> MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.22f)
+                    else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
                 }
-                Text(
-                    text = "Due ${bill.formattedDueDate} • Min $formattedMin",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                TextButton(
-                    onClick = onPay,
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    ),
-                    modifier = Modifier.height(32.dp)
+                val badgeFg = when {
+                    badgeDanger -> Color.White
+                    selected -> MaterialTheme.colorScheme.onPrimary
+                    else -> MaterialTheme.colorScheme.primary
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(badgeBg)
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Payments, contentDescription = null, modifier = Modifier.size(15.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Pay now", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        text = badge,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = badgeFg
+                    )
                 }
             }
         }

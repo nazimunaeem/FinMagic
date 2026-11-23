@@ -30,4 +30,13 @@ interface CardTransactionDao {
 
     @Query("DELETE FROM card_transactions WHERE id = :id AND smsBody LIKE 'manual:%'")
     suspend fun deleteManualById(id: Long)
+
+    @Query("DELETE FROM card_transactions WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("SELECT * FROM card_transactions WHERE id = :id LIMIT 1")
+    suspend fun findByIdOnce(id: Long): CardTransaction?
+
+    @Query("DELETE FROM card_transactions WHERE smsBody = :smsBody")
+    suspend fun deleteBySmsBody(smsBody: String)
 }

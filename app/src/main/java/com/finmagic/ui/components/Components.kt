@@ -48,6 +48,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -96,13 +97,17 @@ fun BillCard(
         DueStatus.SAFE -> StatusSafeBg
     }
 
+    val remainingAmount = maxOf(0.0, bill.totalDue - bill.paidAmount)
+    val isOutstanding = !bill.isPaid && remainingAmount > 0.0
+    val dangerColor = MaterialTheme.colorScheme.error
+
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -121,7 +126,7 @@ fun BillCard(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(32.dp)
+                            .size(30.dp)
                             .clip(CircleShape)
                             .background(statusColor.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
@@ -133,7 +138,7 @@ fun BillCard(
                             modifier = Modifier.size(16.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Column {
                         Text(
                             text = bill.displayName,
@@ -153,7 +158,7 @@ fun BillCard(
                 StatusChip(status = bill.dueStatus, statusColor = statusColor, bgColor = bgColor)
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -162,26 +167,46 @@ fun BillCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (bill.paidAmount > 0) "Remaining" else "Total Due",
+                        text = "Bill Amount",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = if (bill.paidAmount > 0) bill.formattedRemaining else bill.formattedTotal,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = statusColor
+                        text = bill.formattedTotal,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
 
-                Column(horizontalAlignment = Alignment.End) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Outstanding",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = if (bill.isPaid) "৳0.00" else bill.formattedRemaining,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isOutstanding) dangerColor else StatusSafe
+                    )
+                }
+
+                Column(
+                    modifier = Modifier.weight(0.85f),
+                    horizontalAlignment = Alignment.End
+                ) {
                     Text(
                         text = "Min Due",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     val remainingMin = maxOf(0.0, bill.minDue - bill.paidAmount)
-                    val formattedMin = if (remainingMin > 0) {
+                    val formattedMin = if (!bill.isPaid && remainingMin > 0) {
                         val symbol = when (bill.currency.uppercase()) {
                             "USD" -> "$"
                             else -> "৳"
@@ -193,12 +218,12 @@ fun BillCard(
                         text = formattedMin,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color = if (remainingMin > 0) statusColor else StatusSafe
+                        color = if (!bill.isPaid && remainingMin > 0) statusColor else StatusSafe
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -278,20 +303,27 @@ fun BillCard(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (!bill.isPaid) {
-                        TextButton(
+                        Button(
                             onClick = { showPaySheet = true },
-                            contentPadding = PaddingValues(0.dp),
-                            modifier = Modifier.height(32.dp)
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = dangerColor,
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            modifier = Modifier
+                                .height(34.dp)
+                                .testTag("bill_pay_button_${bill.billId}")
                         ) {
                             Icon(Icons.Default.Payments, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Pay", style = MaterialTheme.typography.labelSmall)
+                            Text("Pay Bill", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         TextButton(
                             onClick = { showPaymentDialog = true },
-                            contentPadding = PaddingValues(0.dp),
-                            modifier = Modifier.height(32.dp)
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                            modifier = Modifier.height(34.dp)
                         ) {
                             Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -301,7 +333,7 @@ fun BillCard(
 
                     IconButton(
                         onClick = { showEditDialog = true },
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(34.dp)
                     ) {
                         Icon(
                             Icons.Default.Create,
@@ -642,7 +674,7 @@ fun SectionHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(

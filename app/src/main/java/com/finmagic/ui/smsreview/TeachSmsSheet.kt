@@ -14,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -158,6 +159,8 @@ fun TeachSmsSheet(
     onDismiss: () -> Unit,
     onTeachCredit: (accountId: Long, amount: Double, occurredAt: Long, counterparty: String, category: String, balanceAfter: Double?, saveRule: Boolean, req: String, exc: String) -> Unit,
     onTeachDebit: (accountId: Long, amount: Double, occurredAt: Long, counterparty: String, category: String, balanceAfter: Double?, saveRule: Boolean, req: String, exc: String) -> Unit,
+    onTeachCardCredit: (cardId: Long, amount: Double, occurredAt: Long, saveRule: Boolean, req: String, exc: String) -> Unit,
+    onTeachCardDebit: (cardId: Long, amount: Double, occurredAt: Long, counterparty: String, category: String, balanceAfter: Double?, saveRule: Boolean, req: String, exc: String) -> Unit,
     onTeachTransfer: (fromAccountId: Long, toAccountId: Long, amount: Double, occurredAt: Long, saveRule: Boolean, req: String, exc: String) -> Unit,
     onTeachAtm: (accountId: Long, amount: Double, occurredAt: Long, saveRule: Boolean, req: String, exc: String) -> Unit,
     onTeachBalanceOnly: (accountId: Long, balance: Double, occurredAt: Long, saveRule: Boolean, req: String, exc: String) -> Unit,
@@ -181,7 +184,11 @@ fun TeachSmsSheet(
     var selectedAction by remember(record.body) { mutableStateOf(suggestTeachAction(record.body)) }
     var fromAccountId by remember { mutableStateOf<Long?>(accounts.firstOrNull()?.id) }
     var toAccountId by remember { mutableStateOf<Long?>(accounts.firstOrNull()?.id) }
-    var selectedCardId by remember { mutableStateOf<Long?>(creditCards.firstOrNull()?.id) }
+    var selectedCardId by remember {
+        mutableStateOf<Long?>(
+            if (accounts.isEmpty()) creditCards.firstOrNull()?.id else null
+        )
+    }
     var amountText by remember {
         mutableStateOf(candidates.amounts.firstOrNull()?.second?.let { "%,.2f".format(it) } ?: "")
     }
@@ -205,12 +212,26 @@ fun TeachSmsSheet(
     var showCreateAccount by remember { mutableStateOf(false) }
     var showBlockSenderConfirm by remember { mutableStateOf(false) }
 
-    LaunchedEffect(accounts) {
-        if (fromAccountId == null || accounts.none { it.id == fromAccountId }) {
+    LaunchedEffect(accounts, creditCards, selectedAction) {
+        if ((selectedAction == TeachAction.BILL || selectedAction == TeachAction.BILL_PAID) && selectedCardId == null) {
+            selectedCardId = creditCards.firstOrNull()?.id
+        } else if (selectedAction != TeachAction.CREDIT && selectedAction != TeachAction.DEBIT &&
+            selectedAction != TeachAction.BILL && selectedAction != TeachAction.BILL_PAID &&
+            fromAccountId == null
+        ) {
             fromAccountId = accounts.firstOrNull()?.id
+            selectedCardId = null
+        } else if (selectedCardId == null && (fromAccountId == null || accounts.none { it.id == fromAccountId })) {
+            fromAccountId = accounts.firstOrNull()?.id
+            if (fromAccountId == null) {
+                selectedCardId = creditCards.firstOrNull()?.id
+            }
         }
         if (toAccountId == null || accounts.none { it.id == toAccountId }) {
             toAccountId = accounts.firstOrNull()?.id
+        }
+        if (selectedCardId != null && creditCards.none { it.id == selectedCardId }) {
+            selectedCardId = creditCards.firstOrNull()?.id
         }
     }
 
@@ -228,7 +249,10 @@ fun TeachSmsSheet(
             if (selectedAction == TeachAction.TRANSFER && (fromAccountId == null || toAccountId == null)) {
                 add("Choose both transfer accounts.")
             }
-            if ((selectedAction == TeachAction.CREDIT || selectedAction == TeachAction.DEBIT || selectedAction == TeachAction.ATM || selectedAction == TeachAction.BALANCE_ONLY) && fromAccountId == null) {
+            if ((selectedAction == TeachAction.CREDIT || selectedAction == TeachAction.DEBIT) && fromAccountId == null && selectedCardId == null) {
+                add("Choose an account or credit card target.")
+            }
+            if ((selectedAction == TeachAction.ATM || selectedAction == TeachAction.BALANCE_ONLY) && fromAccountId == null) {
                 add("Choose an account target.")
             }
             if ((selectedAction == TeachAction.BILL || selectedAction == TeachAction.BILL_PAID) && selectedCardId == null) {
@@ -249,19 +273,14 @@ fun TeachSmsSheet(
         }
     }
 
-    val needsAccountAndAmount = when (selectedAction) {
-        TeachAction.IGNORE, TeachAction.BALANCE_ONLY, TeachAction.BILL, TeachAction.BILL_PAID -> false
-        TeachAction.TRANSFER -> true // Needs fromAccount, toAccount, and amount
-        else -> true // CREDIT, DEBIT, ATM need account and amount
-    }
-
     val isValid = when (selectedAction) {
         TeachAction.IGNORE -> true
         TeachAction.BALANCE_ONLY -> fromAccountId != null && balance != null
         TeachAction.TRANSFER -> fromAccountId != null && toAccountId != null && fromAccountId != toAccountId && amount != null && amount > 0
         TeachAction.BILL -> selectedCardId != null && amount != null && amount > 0 && minDue >= 0
         TeachAction.BILL_PAID -> selectedCardId != null && amount != null && amount > 0
-        else -> fromAccountId != null && amount != null && amount > 0 // CREDIT, DEBIT, ATM
+        TeachAction.CREDIT, TeachAction.DEBIT -> (fromAccountId != null || selectedCardId != null) && amount != null && amount > 0
+        TeachAction.ATM -> fromAccountId != null && amount != null && amount > 0
     }
 
     Scaffold(
@@ -393,25 +412,6 @@ fun TeachSmsSheet(
                                     selectedCardId = null
                                 }
                             )
-                        }
-                        if (creditCards.isNotEmpty()) {
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                "Credit Cards",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            creditCards.forEach { card ->
-                                TargetChoiceRow(
-                                    label = card.displayName,
-                                    tag = "Card",
-                                    selected = selectedCardId == card.id,
-                                    onClick = {
-                                        selectedCardId = card.id
-                                        fromAccountId = null
-                                    }
-                                )
-                            }
                         }
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -572,7 +572,7 @@ fun TeachSmsSheet(
                                 }
                             )
                         }
-                        if (creditCards.isNotEmpty()) {
+                        if (creditCards.isNotEmpty() && selectedAction != TeachAction.ATM) {
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 "Credit Cards",
@@ -583,7 +583,7 @@ fun TeachSmsSheet(
                                 TargetChoiceRow(
                                     label = card.displayName,
                                     tag = "Card",
-                                    selected = selectedCardId == card.id,
+                                    selected = selectedCardId == card.id && fromAccountId == null,
                                     onClick = {
                                         selectedCardId = card.id
                                         fromAccountId = null
@@ -765,8 +765,8 @@ fun TeachSmsSheet(
             }
 
             val previewTitle = when (selectedAction) {
-                TeachAction.CREDIT -> "Preview: credit to account"
-                TeachAction.DEBIT -> "Preview: debit from account"
+                TeachAction.CREDIT -> if (selectedCardId != null) "Preview: credit to card" else "Preview: credit to account"
+                TeachAction.DEBIT -> if (selectedCardId != null) "Preview: debit from card" else "Preview: debit from account"
                 TeachAction.TRANSFER -> "Preview: transfer between accounts"
                 TeachAction.ATM -> "Preview: ATM withdrawal"
                 TeachAction.BALANCE_ONLY -> "Preview: balance update"
@@ -776,7 +776,15 @@ fun TeachSmsSheet(
             }
             val previewText = when (selectedAction) {
                 TeachAction.CREDIT, TeachAction.DEBIT, TeachAction.ATM, TeachAction.BALANCE_ONLY -> {
-                    val target = fromAccountId?.let { id -> accounts.firstOrNull { it.id == id }?.displayName ?: "Selected account" } ?: "Select an account"
+                    val target = when {
+                        selectedCardId != null && (selectedAction == TeachAction.CREDIT || selectedAction == TeachAction.DEBIT) -> {
+                            creditCards.firstOrNull { it.id == selectedCardId }?.displayName ?: "Selected card"
+                        }
+                        fromAccountId != null -> {
+                            accounts.firstOrNull { it.id == fromAccountId }?.displayName ?: "Selected account"
+                        }
+                        else -> "Select a target"
+                    }
                     val amountTextPreview = amountText.ifBlank { "—" }
                     val dateTextPreview = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date(selectedDate))
                     val balancePreview = if (selectedAction == TeachAction.BALANCE_ONLY) balanceText.ifBlank { "—" } else balanceText.ifBlank { "No balance" }
@@ -859,68 +867,86 @@ fun TeachSmsSheet(
                     if (!isValid) return@Button
                     val parsedBalance = balanceText.replace(",", "").toDoubleOrNull()
                     when (selectedAction) {
-                TeachAction.IGNORE -> onIgnore()
-                TeachAction.CREDIT -> {
-                    val amt = amount ?: return@Button
-                    val accountId = fromAccountId ?: return@Button
-                    onTeachCredit(
-                        accountId, amt, selectedDate,
-                        counterparty, category, parsedBalance, saveRule, requiredKeywords, excludedKeywords
-                    )
-                }
-                TeachAction.DEBIT -> {
-                    val amt = amount ?: return@Button
-                    val accountId = fromAccountId ?: return@Button
-                    onTeachDebit(
-                        accountId, amt, selectedDate,
-                        counterparty, category, parsedBalance, saveRule, requiredKeywords, excludedKeywords
-                    )
-                }
-                TeachAction.TRANSFER -> {
-                    val amt = amount ?: return@Button
-                    val fromAccId = fromAccountId ?: return@Button
-                    val toAccId = toAccountId ?: return@Button
-                    onTeachTransfer(
-                        fromAccId, toAccId, amt, selectedDate,
-                        saveRule, requiredKeywords, excludedKeywords
-                    )
-                }
-                TeachAction.ATM -> {
-                    val amt = amount ?: return@Button
-                    val accountId = fromAccountId ?: return@Button
-                    onTeachAtm(
-                        accountId, amt, selectedDate,
-                        saveRule, requiredKeywords, excludedKeywords
-                    )
-                }
-                TeachAction.BALANCE_ONLY -> {
-                    val bal = balance ?: return@Button
-                    val accountId = fromAccountId ?: return@Button
-                    onTeachBalanceOnly(
-                        accountId, bal, selectedDate,
-                        saveRule, requiredKeywords, excludedKeywords
-                    )
-                }
-                TeachAction.BILL -> {
-                    val amt = amount ?: return@Button
-                    val cardId = selectedCardId ?: return@Button
-                    onTeachCreateBill(
-                        cardId, amt, minDue, billDueDate, billPeriod, selectedDate,
-                        saveRule, requiredKeywords, excludedKeywords
-                    )
-                }
-                TeachAction.BILL_PAID -> {
-                    val amt = amount ?: return@Button
-                    val cardId = selectedCardId ?: return@Button
-                    onTeachBillPaid(
-                        cardId, amt, selectedDate,
-                        saveRule, requiredKeywords, excludedKeywords
-                    )
-                }
-            }
+                        TeachAction.IGNORE -> onIgnore()
+                        TeachAction.CREDIT -> {
+                            val amt = amount ?: return@Button
+                            val cardId = selectedCardId
+                            if (cardId != null) {
+                                onTeachCardCredit(
+                                    cardId, amt, selectedDate,
+                                    saveRule, requiredKeywords, excludedKeywords
+                                )
+                            } else {
+                                val accountId = fromAccountId ?: return@Button
+                                onTeachCredit(
+                                    accountId, amt, selectedDate,
+                                    counterparty, category, parsedBalance, saveRule, requiredKeywords, excludedKeywords
+                                )
+                            }
+                        }
+                        TeachAction.DEBIT -> {
+                            val amt = amount ?: return@Button
+                            val cardId = selectedCardId
+                            if (cardId != null) {
+                                onTeachCardDebit(
+                                    cardId, amt, selectedDate,
+                                    counterparty, category, parsedBalance, saveRule, requiredKeywords, excludedKeywords
+                                )
+                            } else {
+                                val accountId = fromAccountId ?: return@Button
+                                onTeachDebit(
+                                    accountId, amt, selectedDate,
+                                    counterparty, category, parsedBalance, saveRule, requiredKeywords, excludedKeywords
+                                )
+                            }
+                        }
+                        TeachAction.TRANSFER -> {
+                            val amt = amount ?: return@Button
+                            val fromAccId = fromAccountId ?: return@Button
+                            val toAccId = toAccountId ?: return@Button
+                            onTeachTransfer(
+                                fromAccId, toAccId, amt, selectedDate,
+                                saveRule, requiredKeywords, excludedKeywords
+                            )
+                        }
+                        TeachAction.ATM -> {
+                            val amt = amount ?: return@Button
+                            val accountId = fromAccountId ?: return@Button
+                            onTeachAtm(
+                                accountId, amt, selectedDate,
+                                saveRule, requiredKeywords, excludedKeywords
+                            )
+                        }
+                        TeachAction.BALANCE_ONLY -> {
+                            val bal = balance ?: return@Button
+                            val accountId = fromAccountId ?: return@Button
+                            onTeachBalanceOnly(
+                                accountId, bal, selectedDate,
+                                saveRule, requiredKeywords, excludedKeywords
+                            )
+                        }
+                        TeachAction.BILL -> {
+                            val amt = amount ?: return@Button
+                            val cardId = selectedCardId ?: return@Button
+                            onTeachCreateBill(
+                                cardId, amt, minDue, billDueDate, billPeriod, selectedDate,
+                                saveRule, requiredKeywords, excludedKeywords
+                            )
+                        }
+                        TeachAction.BILL_PAID -> {
+                            val amt = amount ?: return@Button
+                            val cardId = selectedCardId ?: return@Button
+                            onTeachBillPaid(
+                                cardId, amt, selectedDate,
+                                saveRule, requiredKeywords, excludedKeywords
+                            )
+                        }
+                    }
                 },
                 enabled = isValid,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("teach_sms_save_button")
             ) {
                 Text(if (selectedAction == TeachAction.IGNORE) "Ignore this SMS" else "Save")
             }

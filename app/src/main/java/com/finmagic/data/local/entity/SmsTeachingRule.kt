@@ -41,7 +41,8 @@ data class SmsTeachingRule(
     val matchCount: Int = 0,
     val lastMatchedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val cardId: Long? = null
 ) {
     companion object {
         const val ACTION_CREDIT = "CREDIT"
@@ -50,6 +51,8 @@ data class SmsTeachingRule(
         const val ACTION_ATM_WITHDRAWAL = "ATM_WITHDRAWAL"
         const val ACTION_BALANCE_ONLY = "BALANCE_ONLY"
         const val ACTION_IGNORE = "IGNORE"
+        const val ACTION_CARD_DEBIT = "CARD_DEBIT"
+        const val ACTION_CARD_CREDIT = "CARD_CREDIT"
     }
 
     val actionLabel: String
@@ -60,6 +63,8 @@ data class SmsTeachingRule(
             ACTION_ATM_WITHDRAWAL -> "ATM Withdrawal"
             ACTION_BALANCE_ONLY -> "Balance Only"
             ACTION_IGNORE -> "Ignore"
+            ACTION_CARD_DEBIT -> "Card Debit"
+            ACTION_CARD_CREDIT -> "Card Credit"
             else -> action
         }
 

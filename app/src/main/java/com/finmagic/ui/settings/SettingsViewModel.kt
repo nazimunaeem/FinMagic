@@ -8,6 +8,10 @@ import com.finmagic.data.local.PreferenceManager
 import com.finmagic.data.local.dao.CardTransactionDao
 import com.finmagic.data.repository.AccountRepository
 import com.finmagic.data.repository.BillRepository
+import com.finmagic.data.update.GitHubUpdateChecker
+import com.finmagic.data.update.UpdateCheckState
+import com.finmagic.data.web.LocalWebServer
+import com.finmagic.data.web.WebServerState
 import com.finmagic.notification.DueDateReminderScheduler
 import com.finmagic.notification.SmsScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -39,8 +43,25 @@ class SettingsViewModel @Inject constructor(
     private val billRepository: BillRepository,
     private val accountRepository: AccountRepository,
     private val cardTransactionDao: CardTransactionDao,
-    private val preferenceManager: PreferenceManager
+    private val preferenceManager: PreferenceManager,
+    private val localWebServer: LocalWebServer,
+    private val gitHubUpdateChecker: GitHubUpdateChecker
 ) : AndroidViewModel(application) {
+
+    val webServerState: StateFlow<WebServerState> = localWebServer.state
+
+    val webPortalPort: StateFlow<Int> = preferenceManager.webPortalPort
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 8080)
+
+    val webPortalAutoStart: StateFlow<Boolean> = preferenceManager.webPortalAutoStart
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val updateCheckState: StateFlow<UpdateCheckState> = gitHubUpdateChecker.state
+
+    val autoUpdateCheckEnabled: StateFlow<Boolean> = preferenceManager.autoUpdateCheckEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
+    val installedVersionName: String = gitHubUpdateChecker.installedVersionName
 
     private val _exportState = MutableStateFlow<ExportState>(ExportState.Idle)
     val exportState: StateFlow<ExportState> = _exportState.asStateFlow()
@@ -93,6 +114,57 @@ class SettingsViewModel @Inject constructor(
 
     fun setCategoryNickname(category: String, nickname: String) {
         viewModelScope.launch { preferenceManager.setCategoryNickname(category, nickname) }
+    }
+
+    // ---- Wi-Fi / Hotspot Web Portal ----
+
+    fun toggleWebServer(enabled: Boolean) {
+        viewModelScope.launch {
+            if (enabled) {
+                val port = preferenceManager.webPortalPort.first()
+                localWebServer.start(port)
+            } else {
+                localWebServer.stop()
+            }
+        }
+    }
+
+    fun setWebPortalPort(port: Int) {
+        val safePort = port.coerceIn(1024, 65535)
+        viewModelScope.launch {
+            preferenceManager.setWebPortalPort(safePort)
+            if (localWebServer.state.value.isRunning) {
+                localWebServer.start(safePort)
+            }
+        }
+    }
+
+    fun setWebPortalAutoStart(enabled: Boolean) {
+        viewModelScope.launch { preferenceManager.setWebPortalAutoStart(enabled) }
+    }
+
+    fun refreshWebPortalUrls() {
+        localWebServer.refreshUrls()
+    }
+
+    // ---- GitHub Auto Update ----
+
+    fun setAutoUpdateCheckEnabled(enabled: Boolean) {
+        viewModelScope.launch { preferenceManager.setAutoUpdateCheckEnabled(enabled) }
+    }
+
+    fun checkForUpdatesManual() {
+        viewModelScope.launch {
+            preferenceManager.setSkippedUpdateTag(null)
+            gitHubUpdateChecker.checkForUpdates(manual = true)
+        }
+    }
+
+    fun skipUpdateVersion(tag: String) {
+        viewModelScope.launch {
+            preferenceManager.setSkippedUpdateTag(tag)
+            gitHubUpdateChecker.dismissUpdate()
+        }
     }
 
     // ---- Cash entry categories (expense / income) ----

@@ -19,6 +19,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -41,7 +42,8 @@ import com.finmagic.ui.settings.SettingsViewModel
 @Composable
 fun HomeScreen(
     onAccountClick: (Long) -> Unit = {},
-    onCardClick: (Long) -> Unit = {}
+    onCardClick: (Long) -> Unit = {},
+    historyResetTick: Int = 0
 ) {
     val accountsVm: AccountsViewModel = hiltViewModel()
     val settingsVm: SettingsViewModel = hiltViewModel()
@@ -52,6 +54,12 @@ fun HomeScreen(
     // 0 = History, 1 = Accounts, 2 = Cards
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var showAddDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(historyResetTick) {
+        if (historyResetTick > 0) {
+            selectedTab = 0
+        }
+    }
 
     BackHandler(enabled = selectedTab != 0) {
         selectedTab = 0
@@ -119,6 +127,7 @@ fun HomeScreen(
                     showPill = false,
                     initialTab = 0,
                     onAccountClick = onAccountClick,
+                    onCardClick = onCardClick,
                     viewModel = accountsVm
                 )
                 1 -> AccountsScreen(
@@ -126,6 +135,7 @@ fun HomeScreen(
                     showPill = false,
                     initialTab = 1,
                     onAccountClick = onAccountClick,
+                    onCardClick = onCardClick,
                     viewModel = accountsVm
                 )
                 2 -> CreditCardsScreen(

@@ -83,6 +83,7 @@ fun AccountDetailScreen(
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
     val accountBalance by viewModel.balance.collectAsStateWithLifecycle()
     val categoryNicknames by viewModel.categoryNicknames.collectAsStateWithLifecycle()
+    val allAccountTypes by viewModel.allAccountTypes.collectAsStateWithLifecycle()
     val exportState by viewModel.exportState.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -286,12 +287,17 @@ fun AccountDetailScreen(
     if (showEditDialog && account != null) {
         EditAccountDialog(
             account = account!!,
+            availableTypes = allAccountTypes,
             onDismiss = { showEditDialog = false },
             onConfirm = { newName, includeInTotal ->
                 viewModel.renameAccount(newName)
                 if (includeInTotal != account!!.includeInTotal) {
                     viewModel.setIncludeInTotal(includeInTotal)
                 }
+                showEditDialog = false
+            },
+            onConfirmDetails = { newName, accountType, isLiability, includeInTotal ->
+                viewModel.updateAccountDetails(newName, accountType, isLiability, includeInTotal)
                 showEditDialog = false
             },
             onDeleteRequest = {
