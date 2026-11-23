@@ -90,6 +90,51 @@ internal fun billYearMonth(bill: BillWithCard): Pair<Int, Int> {
     return fallback.get(Calendar.YEAR) to fallback.get(Calendar.MONTH)
 }
 
+/**
+ * Chronological timestamp for sorting paid bills alongside payments in history
+ * (newer at top, older at bottom). Prefers the bill's due date / period end
+ * over [BillWithCard.paidAt] or [BillWithCard.detectedAt], because re-scans or
+ * marking an old bill paid later shouldn't float an older statement above newer ones.
+ */
+internal fun billHistoryTimestamp(bill: BillWithCard): Long {
+    try {
+        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.US).apply { isLenient = false }
+        val normalizedDueDate = com.finmagic.data.sms.BankSmsParser.normalizeDate(bill.dueDate)
+        val date = sdf.parse(normalizedDueDate)
+        if (date != null) {
+            return Calendar.getInstance().apply {
+                time = date
+                set(Calendar.HOUR_OF_DAY, 23)
+                set(Calendar.MINUTE, 59)
+                set(Calendar.SECOND, 59)
+                set(Calendar.MILLISECOND, 999)
+            }.timeInMillis
+        }
+    } catch (_: Exception) {}
+
+    val periodFormats = listOf(
+        "MMM-yyyy", "MMM yyyy", "MMM-yy", "MMM yy", "MMMM yyyy", "MMMM-yyyy"
+    )
+    for (fmt in periodFormats) {
+        try {
+            val sdfP = SimpleDateFormat(fmt, Locale.US).apply { isLenient = false }
+            val periodDate = sdfP.parse(bill.billPeriod)
+            if (periodDate != null) {
+                return Calendar.getInstance().apply {
+                    time = periodDate
+                    set(Calendar.DAY_OF_MONTH, getActualMaximum(Calendar.DAY_OF_MONTH))
+                    set(Calendar.HOUR_OF_DAY, 23)
+                    set(Calendar.MINUTE, 59)
+                    set(Calendar.SECOND, 59)
+                    set(Calendar.MILLISECOND, 999)
+                }.timeInMillis
+            }
+        } catch (_: Exception) {}
+    }
+
+    return bill.paidAt ?: bill.detectedAt
+}
+
 internal fun matchesPeriod(
     occurredAt: Long,
     mode: CardPeriodMode,
@@ -271,7 +316,7 @@ class CreditCardsViewModel @Inject constructor(
 
                     val unpaidBills = allBills.filter { !it.isPaid && !it.isSuperseded }
                     val paidBills = allBills.filter { it.isPaid }
-                        .sortedByDescending { it.paidAt ?: it.detectedAt }
+                        .sortedByDescending { billHistoryTimestamp(it) }
 
                     val now = Calendar.getInstance()
                     val currentMonth = now.get(Calendar.MONTH)
@@ -424,7 +469,7 @@ class CreditCardsViewModel @Inject constructor(
                         safeBills = sortBills(thisMonthBillsList.filter { it.dueStatus == DueStatus.SAFE }),
                         previousMonthsBills = sortBills(prevMonthBillsList),
                         paidHistory = paidBills,
-                        recentPayments = allPayments.take(20),
+                        recentPayments = allPayments,
                         cards = cardsStats,
                         perCardSummary = perCardSummary,
                         trend = trend,

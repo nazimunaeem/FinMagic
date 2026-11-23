@@ -1,6 +1,7 @@
 package com.finmagic.ui.creditcards
 
 import com.finmagic.data.local.entity.BillWithCard
+import com.finmagic.data.local.entity.CardPayment
 import com.finmagic.data.local.entity.CardTransaction
 import com.finmagic.data.local.entity.CreditCard
 import org.junit.Assert.assertEquals
@@ -134,5 +135,48 @@ class CreditCardsMatchingTest {
         assertTrue(billMatchesPeriod(unparsedPeriodBill, CardPeriodMode.MONTH, 2025, Calendar.AUGUST))
         assertTrue(billMatchesPeriod(unparsedPeriodBill, CardPeriodMode.YEAR, 2025, Calendar.JANUARY))
         assertFalse(billMatchesPeriod(unparsedPeriodBill, CardPeriodMode.YEAR, 2026, Calendar.JANUARY))
+    }
+
+    @Test
+    fun buildPaidTimeline_sortsNewerOnTopAndOlderAtBottom() {
+        val scanToday = Calendar.getInstance().apply {
+            set(2026, Calendar.NOVEMBER, 23, 10, 0, 0)
+        }.timeInMillis
+
+        // Older bill (Jan 2026) marked paid/detected today should still sort BEFORE-in-time (bottom)
+        val janBill = BillWithCard(
+            billId = 1L, cardId = 1L, bankName = "City Bank", cardLast4 = "1234", cardNickname = "",
+            billPeriod = "Jan-2026", totalDue = 5000.0, minDue = 500.0, dueDate = "20/01/2026",
+            isPaid = true, paidAmount = 5000.0, paidAt = scanToday, smsBody = null, currency = "BDT",
+            detectedAt = scanToday
+        )
+        val octBill = BillWithCard(
+            billId = 2L, cardId = 1L, bankName = "City Bank", cardLast4 = "1234", cardNickname = "",
+            billPeriod = "Oct-2026", totalDue = 8000.0, minDue = 500.0, dueDate = "20/10/2026",
+            isPaid = true, paidAmount = 8000.0, paidAt = scanToday - 10_000_000L, smsBody = null, currency = "BDT",
+            detectedAt = scanToday - 10_000_000L
+        )
+        val augPayment = CardPayment(
+            id = 10L,
+            cardTail = "1234",
+            amountBdt = 3000.0,
+            amountUsd = 0.0,
+            paidAt = Calendar.getInstance().apply { set(2026, Calendar.AUGUST, 10, 12, 0, 0) }.timeInMillis,
+            smsBody = "aug pay"
+        )
+        val novPayment = CardPayment(
+            id = 11L,
+            cardTail = "1234",
+            amountBdt = 4000.0,
+            amountUsd = 0.0,
+            paidAt = Calendar.getInstance().apply { set(2026, Calendar.NOVEMBER, 5, 12, 0, 0) }.timeInMillis,
+            smsBody = "nov pay"
+        )
+
+        val timeline = buildPaidTimeline(listOf(janBill, octBill), listOf(augPayment, novPayment))
+        assertEquals(
+            listOf("pay_11", "history_2", "pay_10", "history_1"),
+            timeline.map { it.key }
+        )
     }
 }

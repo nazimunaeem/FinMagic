@@ -48,10 +48,13 @@ import com.finmagic.ui.settings.SettingsViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
+    selectedTab: Int = 0,
+    onTabSelected: (Int) -> Unit = {},
+    cardsSubTab: Int = 0,
+    onCardsSubTabSelected: (Int) -> Unit = {},
     onAccountClick: (Long) -> Unit = {},
     onCardClick: (Long) -> Unit = {},
-    onChartsClick: () -> Unit = {},
-    historyResetTick: Int = 0
+    onChartsClick: () -> Unit = {}
 ) {
     val accountsVm: AccountsViewModel = hiltViewModel()
     val settingsVm: SettingsViewModel = hiltViewModel()
@@ -59,18 +62,10 @@ fun HomeScreen(
     val cashExpenseCategories by settingsVm.cashExpenseCategories.collectAsStateWithLifecycle()
     val cashIncomeCategories by settingsVm.cashIncomeCategories.collectAsStateWithLifecycle()
 
-    // 0 = History, 1 = Accounts, 2 = Cards
-    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var showAddDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(historyResetTick) {
-        if (historyResetTick > 0) {
-            selectedTab = 0
-        }
-    }
-
     BackHandler(enabled = selectedTab != 0) {
-        selectedTab = 0
+        onTabSelected(0)
     }
 
     Scaffold(
@@ -105,19 +100,19 @@ fun HomeScreen(
                 ) {
                     SegmentedButton(
                         selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
+                        onClick = { onTabSelected(0) },
                         shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3),
                         modifier = Modifier.testTag("home_tab_history")
                     ) { Text("History") }
                     SegmentedButton(
                         selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
+                        onClick = { onTabSelected(1) },
                         shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3),
                         modifier = Modifier.testTag("home_tab_accounts")
                     ) { Text("Accounts") }
                     SegmentedButton(
                         selected = selectedTab == 2,
-                        onClick = { selectedTab = 2 },
+                        onClick = { onTabSelected(2) },
                         shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3),
                         modifier = Modifier.testTag("home_tab_cards")
                     ) { Text("Cards") }
@@ -166,7 +161,8 @@ fun HomeScreen(
                 2 -> CreditCardsScreen(
                     showTopBar = false,
                     showPill = false,
-                    initialTab = 0,
+                    initialTab = cardsSubTab,
+                    onTabSelected = onCardsSubTabSelected,
                     onCardClick = onCardClick
                 )
             }

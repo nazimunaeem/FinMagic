@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -205,9 +206,9 @@ fun MainApp(
     // Sub-tab selection per section, hoisted here so it survives being covered by
     // detail screens (back restores it), while a bottom-bar tap force-resets it to
     // the default sub-tab (Accounts -> History, Cards -> Dashboard).
-    var accountsInitialTab by remember { mutableIntStateOf(0) }
-    var cardsInitialTab by remember { mutableIntStateOf(0) }
-    var homeHistoryResetTick by remember { mutableIntStateOf(0) }
+    var accountsInitialTab by rememberSaveable { mutableIntStateOf(0) }
+    var cardsInitialTab by rememberSaveable { mutableIntStateOf(0) }
+    var homeSelectedTab by rememberSaveable { mutableIntStateOf(0) }
     var lastHomeTapMs by remember { mutableLongStateOf(0L) }
 
     Scaffold(
@@ -234,7 +235,7 @@ fun MainApp(
                                 val isDoubleTap = now - lastHomeTapMs <= 450L
                                 lastHomeTapMs = if (isDoubleTap) 0L else now
                                 if (isDoubleTap) {
-                                    homeHistoryResetTick += 1
+                                    homeSelectedTab = 0
                                     navController.navigate(Screen.Home.route) {
                                         popUpTo(navController.graph.findStartDestination().id) {
                                             inclusive = false
@@ -274,6 +275,10 @@ fun MainApp(
         ) {
             composable(Screen.Home.route) {
                 HomeScreen(
+                    selectedTab = homeSelectedTab,
+                    onTabSelected = { homeSelectedTab = it },
+                    cardsSubTab = cardsInitialTab,
+                    onCardsSubTabSelected = { cardsInitialTab = it },
                     onAccountClick = { accountId ->
                         navController.navigate("accounts/$accountId")
                     },
@@ -284,8 +289,7 @@ fun MainApp(
                         navController.navigate(Screen.Charts.route) {
                             launchSingleTop = true
                         }
-                    },
-                    historyResetTick = homeHistoryResetTick
+                    }
                 )
             }
 

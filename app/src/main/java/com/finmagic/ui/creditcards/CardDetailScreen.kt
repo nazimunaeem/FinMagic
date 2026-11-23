@@ -69,8 +69,12 @@ fun CardDetailScreen(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showAddTxnDialog by remember { mutableStateOf(false) }
 
-    val unpaidBills = remember(bills) { bills.filter { !it.isPaid && !it.isSuperseded } }
-    val paidBills = remember(bills) { bills.filter { it.isPaid } }
+    val unpaidBills = remember(bills) {
+        bills.filter { !it.isPaid && !it.isSuperseded }.sortedBy { billHistoryTimestamp(it) }
+    }
+    val paidBills = remember(bills) {
+        bills.filter { it.isPaid }.sortedByDescending { billHistoryTimestamp(it) }
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -80,7 +84,7 @@ fun CardDetailScreen(
                     Column {
                         Text(
                             text = card?.displayName ?: "Credit Card",
-                            style = MaterialTheme.typography.titleLarge,
+                            style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -88,7 +92,7 @@ fun CardDetailScreen(
                         card?.let {
                             Text(
                                 text = "•••• ${it.cardLast4} • ${it.bankName}",
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -373,12 +377,12 @@ private fun CardSummaryHeader(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Outstanding",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f)
                     )
                     Text(
                         text = formatCurrencies(unpaidTotals),
-                        style = if (formatCurrencies(unpaidTotals).length > 14) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
+                        style = if (formatCurrencies(unpaidTotals).length > 14) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineLarge,
                         fontWeight = FontWeight.Bold,
                         color = if (totalUnpaid > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
                     )
@@ -391,7 +395,7 @@ private fun CardSummaryHeader(
                     ) {
                         Text(
                             text = "$transactionCount txns",
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
@@ -419,12 +423,12 @@ private fun CardSummaryHeader(
                         ) {
                             Text(
                                 text = "Credit Limit Usage",
-                                style = MaterialTheme.typography.labelSmall,
+                                style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
                                 text = "${card.limitSymbol()}${String.format(Locale.US, "%,.0f", card.creditLimit)} • ${(utilizationValue * 100).toInt()}% used",
-                                style = MaterialTheme.typography.labelSmall,
+                                style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -446,15 +450,15 @@ private fun CardSummaryHeader(
                             } else {
                                 "Full limit available"
                             },
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.bodySmall,
                             color = if (utilizationValue > 0.8) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                            else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Bottom,
@@ -462,24 +466,24 @@ private fun CardSummaryHeader(
             ) {
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     Text(
                         text = "Outstanding ${formatCurrencies(unpaidTotals)} • Spent ৳${String.format(Locale.US, "%,.2f", spentAmount)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Medium,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Text(
                         text = "Bills ${formatCurrencies(billedTotals)} • Paid ${formatCurrencies(paidTotals)} ($periodLabel)",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                     )
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "$totalBills bills",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                 )
@@ -530,21 +534,21 @@ private fun CardTransactionRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = txn.merchant,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = if (!txn.category.isNullOrBlank()) "$dateStr • ${txn.category}" else dateStr,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = "৳${String.format(Locale.US, "%,.2f", txn.amount)}",
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -791,12 +795,12 @@ private fun PaymentHistoryCard(
                     Column {
                         Text(
                             text = "Payment Received",
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
                             text = dateStr,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -806,7 +810,7 @@ private fun PaymentHistoryCard(
                     if (payment.amountBdt > 0) {
                         Text(
                             text = "+ ৳${String.format(Locale.US, "%,.2f", payment.amountBdt)}",
-                            style = MaterialTheme.typography.titleSmall,
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = StatusSafe
                         )
@@ -814,7 +818,7 @@ private fun PaymentHistoryCard(
                     if (payment.amountUsd > 0) {
                         Text(
                             text = "+ $${String.format(Locale.US, "%,.2f", payment.amountUsd)}",
-                            style = MaterialTheme.typography.titleSmall,
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = StatusSafe
                         )
@@ -826,8 +830,8 @@ private fun PaymentHistoryCard(
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = payment.smsBody,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
                 )
             }
         }

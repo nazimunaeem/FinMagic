@@ -74,6 +74,9 @@ fun CreditCardsScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var selectedTab by rememberSaveable { mutableIntStateOf(initialTab) }
+    LaunchedEffect(initialTab) {
+        selectedTab = initialTab
+    }
     var showAddCardDialog by remember { mutableStateOf(false) }
     var heroPayBill by remember { mutableStateOf<BillWithCard?>(null) }
 
@@ -98,10 +101,7 @@ fun CreditCardsScreen(
     val showLoading = state.isLoading && state.unpaidCount == 0
 
     val timeline = remember(state.paidHistory, state.recentPayments) {
-        buildList {
-            state.paidHistory.forEach { add(TimelineEntry.BillEntry(it)) }
-            state.recentPayments.forEach { add(TimelineEntry.PaymentEntry(it)) }
-        }.sortedByDescending { it.ts }
+        buildPaidTimeline(state.paidHistory, state.recentPayments)
     }
 
     if (showLoading) {
@@ -298,23 +298,6 @@ fun CreditCardsScreen(
                             }
                         }
 
-                        if (state.perCardSummary.isNotEmpty()) {
-                            item {
-                                SectionHeader(
-                                    title = "BY CARD",
-                                    count = state.perCardSummary.size,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            items(state.perCardSummary, key = { "bycard_${it.cardId}" }) { row ->
-                                CardSummaryRowCard(
-                                    row = row,
-                                    onClick = { onCardClick(row.cardId) },
-                                    modifier = Modifier.padding(horizontal = 12.dp)
-                                )
-                            }
-                        }
-
                         if (state.trend.size >= 2) {
                             item {
                                 SectionHeader(
@@ -419,17 +402,17 @@ fun CreditCardsScreen(
                                 ) {
                                     Text(
                                         text = "Your Cards",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold,
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.Bold,
                                         modifier = Modifier.weight(1f)
                                     )
                                     TextButton(
                                         onClick = { showAddCardDialog = true },
                                         modifier = Modifier.testTag("add_card_button")
                                     ) {
-                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Add")
+                                        Text("Add", style = MaterialTheme.typography.labelLarge)
                                     }
                                 }
                             }
@@ -489,20 +472,34 @@ fun CreditCardsScreen(
     }
 }
 
-private sealed class TimelineEntry {
+internal sealed class TimelineEntry {
     abstract val ts: Long
+    abstract val sortId: Long
     abstract val key: String
 
     data class BillEntry(val bill: BillWithCard) : TimelineEntry() {
-        override val ts: Long = bill.paidAt ?: bill.detectedAt
+        override val ts: Long = billHistoryTimestamp(bill)
+        override val sortId: Long = bill.billId
         override val key: String = "history_${bill.billId}"
     }
 
     data class PaymentEntry(val payment: CardPayment) : TimelineEntry() {
         override val ts: Long = payment.paidAt
+        override val sortId: Long = payment.id
         override val key: String = "pay_${payment.id}"
     }
 }
+
+internal fun buildPaidTimeline(
+    paidBills: List<BillWithCard>,
+    payments: List<CardPayment>
+): List<TimelineEntry> = buildList {
+    paidBills.forEach { add(TimelineEntry.BillEntry(it)) }
+    payments.forEach { add(TimelineEntry.PaymentEntry(it)) }
+}.sortedWith(
+    compareByDescending<TimelineEntry> { it.ts }
+        .thenByDescending { it.sortId }
+)
 
 @Composable
 fun PaymentReceivedRow(
@@ -518,12 +515,12 @@ fun PaymentReceivedRow(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
                     .background(StatusSafe.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
@@ -532,19 +529,19 @@ fun PaymentReceivedRow(
                     imageVector = Icons.Default.CheckCircle,
                     contentDescription = null,
                     tint = StatusSafe,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(18.dp)
                 )
             }
             Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Payment Received •••${payment.cardTail}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(payment.paidAt),
-                    style = MaterialTheme.typography.labelSmall,
+                    text = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(payment.paidAt),
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -641,7 +638,7 @@ internal fun CardPeriodSelector(
                     }
                     Text(
                         text = formatCardPeriodLabel(mode, selectedYear, selectedMonth),
-                        style = MaterialTheme.typography.titleSmall,
+                        style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     IconButton(
@@ -739,15 +736,15 @@ private fun CardItem(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = card.displayName,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = card.maskedCard,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                     )
                 }
 
@@ -757,16 +754,16 @@ private fun CardItem(
                 ) {
                     Text(
                         text = "${stats.transactionCount} txns",
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
                     )
                 }
             }
 
             if (utilization != null) {
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(5.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
@@ -783,13 +780,14 @@ private fun CardItem(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "${card.limitSymbol()}${String.format(Locale.US, "%,.0f", card.creditLimit)} • ${(utilization * 100).toInt()}%",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(5.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Bottom,
@@ -797,18 +795,18 @@ private fun CardItem(
             ) {
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     Text(
                         text = "Outstanding ${formatCurrencyMap(stats.unpaidByCurrency)} • Spent ৳${String.format(Locale.US, "%,.2f", stats.spentAmount)}",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = if (stats.totalUnpaid > 0) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
                         text = "Bill ${formatCurrencyMap(stats.billedByCurrency)} • Paid ${formatCurrencyMap(stats.paidByCurrency)} ($periodLabel)",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -821,7 +819,7 @@ private fun CardItem(
                         } else {
                             "All paid"
                         },
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = if (stats.unpaidBillCount > 0) MaterialTheme.colorScheme.error else StatusSafe
                     )
@@ -836,85 +834,19 @@ private fun CardItem(
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
-                                .defaultMinSize(minHeight = 36.dp)
+                                .defaultMinSize(minHeight = 38.dp)
                                 .testTag("card_pay_bill_${card.id}")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Payments,
                                 contentDescription = null,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Pay Bill", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text("Pay Bill", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CardSummaryRowCard(
-    row: CardSummaryRow,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(bankBrandGradient(row.displayName)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Default.CreditCard,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                    tint = Color.White
-                )
-            }
-            Spacer(modifier = Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = row.displayName,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = row.maskedCard,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                )
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = formatCurrencyMap(row.unpaidByCurrency),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.error
-                )
-                Text(
-                    text = if (row.overdueBillCount > 0) "${row.overdueBillCount} overdue" else "${row.unpaidBillCount} unpaid",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error,
-                    fontWeight = FontWeight.Medium
-                )
             }
         }
     }

@@ -555,6 +555,53 @@ class AccountRepository @Inject constructor(
         return true
     }
 
+    /** Manual transfer between any two accounts. */
+    suspend fun transferBetweenAccounts(
+        fromAccountId: Long,
+        toAccountId: Long,
+        amount: Double,
+        occurredAt: Long = System.currentTimeMillis()
+    ): Boolean {
+        if (amount <= 0.0 || fromAccountId == toAccountId) return false
+        val from = accountDao.findByIdOnce(fromAccountId) ?: return false
+        val to = accountDao.findByIdOnce(toAccountId) ?: return false
+        database.withTransaction {
+            val transferId = transferDao.insert(
+                Transfer(
+                    fromAccountId = from.id,
+                    toAccountId = to.id,
+                    amount = amount,
+                    occurredAt = occurredAt
+                )
+            )
+            txnDao.insert(
+                AccountTransaction(
+                    accountId = from.id,
+                    direction = AccountTransaction.DIRECTION_OUT,
+                    amount = amount,
+                    occurredAt = occurredAt,
+                    category = com.finmagic.data.sms.parsers.TxnCategory.FUND_TRANSFER,
+                    counterparty = "Transfer to ${to.displayName}",
+                    transferId = transferId,
+                    isManual = true
+                )
+            )
+            txnDao.insert(
+                AccountTransaction(
+                    accountId = to.id,
+                    direction = AccountTransaction.DIRECTION_IN,
+                    amount = amount,
+                    occurredAt = occurredAt,
+                    category = com.finmagic.data.sms.parsers.TxnCategory.RECEIVED,
+                    counterparty = "Transfer from ${from.displayName}",
+                    transferId = transferId,
+                    isManual = true
+                )
+            )
+        }
+        return true
+    }
+
     suspend fun deleteEntry(txnId: Long): Boolean {
         val txn = txnDao.findByIdOnce(txnId) ?: return false
         database.withTransaction {
