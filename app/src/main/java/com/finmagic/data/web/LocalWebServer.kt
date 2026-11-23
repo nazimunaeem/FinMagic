@@ -620,15 +620,15 @@ class LocalWebServer @Inject constructor(
     .tabs { display:flex; gap:8px; flex-wrap:wrap; }
     .tab { padding:8px 14px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:var(--text); cursor:pointer; font-weight:600; }
     .tab.active { background:var(--primary); color:#020617; border-color:var(--primary); }
-    main { max-width:1100px; margin:0 auto; padding:16px; display:grid; gap:16px; }
-    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
-    .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px; }
+    main { max-width:1100px; margin:0 auto; padding:10px; display:grid; gap:8px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:8px; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:10px; }
     .label { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
-    .val { font-size:22px; font-weight:700; margin-top:4px; }
+    .val { font-size:22px; font-weight:700; margin-top:2px; }
     .danger { color:var(--danger); }
     .ok { color:var(--ok); }
-    h2 { margin:0 0 10px 0; font-size:15px; }
-    .row { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); flex-wrap:wrap; }
+    h2 { margin:0 0 6px 0; font-size:15px; }
+    .row { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); flex-wrap:wrap; }
     .row:last-child { border-bottom:none; }
     form.inline { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; margin-top:8px; }
     input, select, button { padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:#0f172a; color:var(--text); font-size:14px; }

@@ -181,36 +181,40 @@ fun TeachSmsSheet(
     val candidates = remember(record) { extractCandidates(record.timestamp, record.body) }
     val extracted = remember(record.body) { SmsTeachingEngine.extractAllFields(record.body) }
 
-    var selectedAction by remember(record.body) { mutableStateOf(suggestTeachAction(record.body)) }
-    var fromAccountId by remember { mutableStateOf<Long?>(accounts.firstOrNull()?.id) }
-    var toAccountId by remember { mutableStateOf<Long?>(accounts.firstOrNull()?.id) }
-    var selectedCardId by remember {
+    var selectedAction by remember(record.id) { mutableStateOf(suggestTeachAction(record.body)) }
+    var fromAccountId by remember(record.id) { mutableStateOf<Long?>(accounts.firstOrNull()?.id) }
+    var toAccountId by remember(record.id) { mutableStateOf<Long?>(accounts.firstOrNull()?.id) }
+    var selectedCardId by remember(record.id) {
         mutableStateOf<Long?>(
             if (accounts.isEmpty()) creditCards.firstOrNull()?.id else null
         )
     }
-    var amountText by remember {
-        mutableStateOf(candidates.amounts.firstOrNull()?.second?.let { "%,.2f".format(it) } ?: "")
-    }
-    var balanceText by remember {
+    var amountText by remember(record.id) {
         mutableStateOf(
-            extracted.balance?.let { "%,.2f".format(it) }
-                ?: candidates.balances.firstOrNull()?.second?.let { "%,.2f".format(it) }
+            candidates.amounts.firstOrNull()?.second?.let { String.format(Locale.US, "%.2f", it) } ?: ""
+        )
+    }
+    var balanceText by remember(record.id) {
+        mutableStateOf(
+            extracted.balance?.let { String.format(Locale.US, "%.2f", it) }
+                ?: candidates.balances.firstOrNull()?.second?.let { String.format(Locale.US, "%.2f", it) }
                 ?: ""
         )
     }
-    var minText by remember {
-        mutableStateOf(candidates.amounts.firstOrNull()?.second?.let { "%,.2f".format(it) } ?: "")
+    var minText by remember(record.id) {
+        mutableStateOf(
+            candidates.amounts.firstOrNull()?.second?.let { String.format(Locale.US, "%.2f", it) } ?: ""
+        )
     }
-    var selectedDate by remember { mutableStateOf(extracted.date ?: record.timestamp) }
-    var counterparty by remember { mutableStateOf(extracted.counterparty.orEmpty()) }
-    var category by remember { mutableStateOf("") }
-    var saveRule by remember { mutableStateOf(false) }
-    var requiredKeywords by remember { mutableStateOf("") }
-    var excludedKeywords by remember { mutableStateOf("") }
-    var showDatePicker by remember { mutableStateOf(false) }
-    var showCreateAccount by remember { mutableStateOf(false) }
-    var showBlockSenderConfirm by remember { mutableStateOf(false) }
+    var selectedDate by remember(record.id) { mutableStateOf(extracted.date ?: record.timestamp) }
+    var counterparty by remember(record.id) { mutableStateOf(extracted.counterparty.orEmpty()) }
+    var category by remember(record.id) { mutableStateOf("") }
+    var saveRule by remember(record.id) { mutableStateOf(false) }
+    var requiredKeywords by remember(record.id) { mutableStateOf("") }
+    var excludedKeywords by remember(record.id) { mutableStateOf("") }
+    var showDatePicker by remember(record.id) { mutableStateOf(false) }
+    var showCreateAccount by remember(record.id) { mutableStateOf(false) }
+    var showBlockSenderConfirm by remember(record.id) { mutableStateOf(false) }
 
     LaunchedEffect(accounts, creditCards, selectedAction) {
         if ((selectedAction == TeachAction.BILL || selectedAction == TeachAction.BILL_PAID) && selectedCardId == null) {
@@ -638,7 +642,7 @@ fun TeachSmsSheet(
                     ) {
                         candidates.amounts.forEach { (label, value) ->
                             AssistChip(
-                                onClick = { amountText = "%,.2f".format(value) },
+                                onClick = { amountText = String.format(Locale.US, "%.2f", value) },
                                 label = { Text(label.take(18)) }
                             )
                         }
@@ -700,7 +704,7 @@ fun TeachSmsSheet(
                     ) {
                         candidates.balances.forEach { (label, value) ->
                             AssistChip(
-                                onClick = { balanceText = "%,.2f".format(value) },
+                                onClick = { balanceText = String.format(Locale.US, "%.2f", value) },
                                 label = { Text(label.take(18)) }
                             )
                         }

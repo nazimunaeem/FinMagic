@@ -112,8 +112,8 @@ fun ExpensesScreen(viewModel: ExpensesViewModel = hiltViewModel()) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(inner)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             item { MonthYearSelector(state, viewModel, availableYears) }
 
@@ -345,7 +345,7 @@ private fun StatsCard(
     categoryNicknames: Map<String, String> = emptyMap()
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Text("Total spent", style = MaterialTheme.typography.labelMedium)
             Text(
                 bdtFormat(stats.total),
@@ -421,7 +421,7 @@ private fun ExpenseFilters(
     onQueryChange: (String) -> Unit,
     categoryNicknames: Map<String, String> = emptyMap()
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         OutlinedTextField(
             value = query,
             onValueChange = onQueryChange,
@@ -471,9 +471,9 @@ private fun CategoryBreakdown(
     val prevByCat = prevCategories.associate { it.category to it.total }
 
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Text("By category", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
             categories.forEach { cat ->
                 val fraction = if (total > 0) (cat.total / total).toFloat() else 0f
                 val selected = selectedCategory == cat.category
@@ -550,7 +550,7 @@ private fun ExpenseRowItem(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (onTap != null) Modifier.clickable(onClick = onTap) else Modifier)
-            .padding(vertical = 8.dp),
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {

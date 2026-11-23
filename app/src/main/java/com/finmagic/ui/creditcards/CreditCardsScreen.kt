@@ -141,7 +141,7 @@ fun CreditCardsScreen(
                     selectedTab = tab
                     onTabSelected(tab)
                 },
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
             )
 
             PullToRefreshBox(
@@ -156,8 +156,8 @@ fun CreditCardsScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 LazyColumn(
-                    contentPadding = PaddingValues(top = 4.dp, bottom = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(top = 2.dp, bottom = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     if (selectedTab == 0) {
@@ -168,7 +168,7 @@ fun CreditCardsScreen(
                                     onRequestPermission = {
                                         permissionLauncher.launch(Manifest.permission.READ_SMS)
                                     },
-                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp)
                                 )
                             }
                         }
@@ -177,7 +177,7 @@ fun CreditCardsScreen(
                             item {
                                 CreditCardTeachingCard(
                                     onAddManual = { showAddCardDialog = true },
-                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp)
                                 )
                             }
                         }
@@ -200,7 +200,7 @@ fun CreditCardsScreen(
                                         viewModel.editBill(bill.billId, total, min, due)
                                     },
                                     onCardClick = { onCardClick(bill.cardId) },
-                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp)
                                 )
                             }
                         }
@@ -223,7 +223,7 @@ fun CreditCardsScreen(
                                         viewModel.editBill(bill.billId, total, min, due)
                                     },
                                     onCardClick = { onCardClick(bill.cardId) },
-                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp)
                                 )
                             }
                         }
@@ -246,7 +246,7 @@ fun CreditCardsScreen(
                                         viewModel.editBill(bill.billId, total, min, due)
                                     },
                                     onCardClick = { onCardClick(bill.cardId) },
-                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp)
                                 )
                             }
                         }
@@ -269,7 +269,7 @@ fun CreditCardsScreen(
                                         viewModel.editBill(bill.billId, total, min, due)
                                     },
                                     onCardClick = { onCardClick(bill.cardId) },
-                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp)
                                 )
                             }
                         }
@@ -292,7 +292,7 @@ fun CreditCardsScreen(
                                         viewModel.editBill(bill.billId, total, min, due)
                                     },
                                     onCardClick = { onCardClick(bill.cardId) },
-                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp)
                                 )
                             }
                         }
@@ -309,7 +309,7 @@ fun CreditCardsScreen(
                                 CardSummaryRowCard(
                                     row = row,
                                     onClick = { onCardClick(row.cardId) },
-                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp)
                                 )
                             }
                         }
@@ -325,7 +325,7 @@ fun CreditCardsScreen(
                             item {
                                 TrendChart(
                                     points = state.trend,
-                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp)
                                 )
                             }
                         }
@@ -354,13 +354,13 @@ fun CreditCardsScreen(
                                                 viewModel.editBill(bill.billId, total, min, due)
                                             },
                                             onCardClick = { onCardClick(bill.cardId) },
-                                            modifier = Modifier.padding(horizontal = 16.dp)
+                                            modifier = Modifier.padding(horizontal = 12.dp)
                                         )
                                     }
                                     is TimelineEntry.PaymentEntry -> {
                                         PaymentReceivedRow(
                                             payment = entry.payment,
-                                            modifier = Modifier.padding(horizontal = 16.dp)
+                                            modifier = Modifier.padding(horizontal = 12.dp)
                                         )
                                     }
                                 }
@@ -413,7 +413,7 @@ fun CreditCardsScreen(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                                        .padding(horizontal = 12.dp, vertical = 0.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
@@ -442,12 +442,12 @@ fun CreditCardsScreen(
                                     onModeSelected = { viewModel.setPeriodMode(it) },
                                     onPrevious = { viewModel.stepPreviousPeriod() },
                                     onNext = { viewModel.stepNextPeriod() },
-                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp)
                                 )
                             }
 
                             items(state.cards, key = { it.card.id }) { cardWithStats ->
-                                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                                Box(modifier = Modifier.padding(horizontal = 12.dp)) {
                                     CardItem(
                                         stats = cardWithStats,
                                         periodLabel = formatCardPeriodLabel(
@@ -517,7 +517,7 @@ fun PaymentReceivedRow(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -587,7 +587,7 @@ internal fun CardPeriodSelector(
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -714,7 +714,7 @@ private fun CardItem(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .padding(horizontal = 10.dp, vertical = 8.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -765,7 +765,7 @@ private fun CardItem(
             }
 
             if (utilization != null) {
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
@@ -788,7 +788,7 @@ private fun CardItem(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Bottom,
@@ -869,7 +869,7 @@ private fun CardSummaryRowCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
+                .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -981,8 +981,8 @@ private fun CardsTabPill(
 
     Surface(
         modifier = modifier
-            .height(44.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .height(38.dp)
+            .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         color = containerColor,

@@ -187,8 +187,8 @@ fun AccountDetailScreen(
                 }
             } else {
                 LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     item {
                         MonthPager(
@@ -239,7 +239,7 @@ fun AccountDetailScreen(
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                                modifier = Modifier.padding(top = 4.dp, bottom = 0.dp)
                             )
                         }
                         items(txns, key = { it.id }) { txn ->

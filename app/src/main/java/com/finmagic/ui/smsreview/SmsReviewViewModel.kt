@@ -227,6 +227,7 @@ class SmsReviewViewModel @Inject constructor(
             if (record.isParsed) {
                 accountRepository.replaceParsedSmsEntries(record.id)
             }
+            cardPaymentDao.deleteBySmsBody(record.body)
             val insertedId = cardPaymentDao.insert(
                 CardPayment(
                     cardTail = card.cardLast4,
@@ -433,6 +434,7 @@ class SmsReviewViewModel @Inject constructor(
             if (unpaid != null) {
                 billRepository.markAsPaid(unpaid.id, occurredAt)
             }
+            cardPaymentDao.deleteBySmsBody(record.body)
             cardPaymentDao.insert(
                 CardPayment(
                     cardTail = card.cardLast4,

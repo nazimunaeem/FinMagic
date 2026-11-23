@@ -157,7 +157,7 @@ fun AccountsScreen(
                 SingleChoiceSegmentedButtonRow(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .padding(horizontal = 12.dp, vertical = 2.dp)
                 ) {
                     SegmentedButton(
                         selected = selectedTab == 0,
@@ -173,10 +173,10 @@ fun AccountsScreen(
             }
             LazyColumn(
                 contentPadding = PaddingValues(
-                    top = 4.dp,
-                    bottom = if (showPill) 88.dp else 88.dp
+                    top = 2.dp,
+                    bottom = 76.dp
                 ),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
                 if (selectedTab == 1) {
@@ -206,7 +206,7 @@ fun AccountsScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 2.dp),
+                                .padding(horizontal = 12.dp, vertical = 0.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -216,21 +216,21 @@ fun AccountsScreen(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 OutlinedButton(
                                     onClick = { showManageTypesDialog = true },
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(34.dp).testTag("manage_account_types_button")
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(30.dp).testTag("manage_account_types_button")
                                 ) {
                                     Text("Types", style = MaterialTheme.typography.labelSmall)
                                 }
                                 FilledTonalButton(
                                     onClick = { showAddAccountDialog = true },
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(34.dp).testTag("add_account_button")
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(30.dp).testTag("add_account_button")
                                 ) {
-                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
+                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(Modifier.width(3.dp))
                                     Text("Account", style = MaterialTheme.typography.labelSmall)
                                 }
                             }
@@ -274,7 +274,7 @@ fun AccountsScreen(
                                 AccountCard(
                                     summary = summary,
                                     onClick = { onAccountClick(summary.account.id) },
-                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp)
                                 )
                             }
                         }
@@ -302,7 +302,7 @@ fun AccountsScreen(
                                 cardTotal = state.cardLiabilityTotal,
                                 items = state.cardOutstandingItems,
                                 onCardClick = onCardClick,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
                             )
                         }
                     }
@@ -314,14 +314,14 @@ fun AccountsScreen(
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 4.dp)
+                                modifier = Modifier.padding(horizontal = 12.dp).padding(top = 3.dp, bottom = 0.dp)
                             )
                         }
                         items(state.archivedAccounts, key = { "archived_${it.id}" }) { account ->
                             ArchivedAccountRow(
                                 account = account,
                                 onRestore = { viewModel.restoreAccount(account.id) },
-                                modifier = Modifier.padding(horizontal = 16.dp)
+                                modifier = Modifier.padding(horizontal = 12.dp)
                             )
                         }
                     }
@@ -351,7 +351,7 @@ fun AccountsScreen(
                         SearchField(
                             query = searchQuery,
                             onQueryChange = { searchQuery = it },
-                            modifier = Modifier.padding(horizontal = 16.dp)
+                            modifier = Modifier.padding(horizontal = 12.dp)
                         )
                     }
                     if (monthCategories.isNotEmpty()) {
@@ -359,7 +359,7 @@ fun AccountsScreen(
                             LazyRow(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 16.dp),
+                                    .padding(horizontal = 12.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 item {
@@ -386,7 +386,7 @@ fun AccountsScreen(
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 4.dp)
+                                modifier = Modifier.padding(horizontal = 12.dp).padding(top = 3.dp, bottom = 0.dp)
                             )
                         }
                         monthGroups.forEach { (day, txns) ->
@@ -396,12 +396,12 @@ fun AccountsScreen(
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 4.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp).padding(top = 3.dp, bottom = 0.dp)
                                 )
                             }
                             items(txns, key = { "txn_${it.id}" }) { txnWithAcct ->
                                 val txn = txnWithAcct.toTransaction()
-                                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                                Box(modifier = Modifier.padding(horizontal = 12.dp)) {
                                     TxnRow(
                                         txn = txn,
                                         accountName = txnWithAcct.accountName,
@@ -546,8 +546,8 @@ fun MonthPager(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(12.dp),
+            .padding(horizontal = 12.dp),
+        shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
         ),
@@ -556,7 +556,7 @@ fun MonthPager(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 2.dp),
+                .padding(horizontal = 6.dp, vertical = 0.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -885,11 +885,11 @@ internal fun TotalBalanceHeader(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(18.dp),
+            .padding(horizontal = 12.dp, vertical = 1.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1148,8 +1148,8 @@ private fun AccountTypeGroupHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .padding(top = 6.dp, bottom = 2.dp),
+            .padding(horizontal = 12.dp)
+            .padding(top = 3.dp, bottom = 0.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1202,7 +1202,7 @@ private fun CardsLiabilitySummaryCard(
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1308,9 +1308,9 @@ internal fun AccountCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 10.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Box(
                 modifier = Modifier

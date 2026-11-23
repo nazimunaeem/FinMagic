@@ -127,8 +127,8 @@ fun CardDetailScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 80.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            contentPadding = PaddingValues(top = 2.dp, bottom = 72.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             // Summary Header Card
             item {
@@ -154,7 +154,7 @@ fun CardDetailScreen(
                     onModeSelected = { viewModel.setPeriodMode(it) },
                     onPrevious = { viewModel.stepPreviousPeriod() },
                     onNext = { viewModel.stepNextPeriod() },
-                    modifier = Modifier.padding(horizontal = 16.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp)
                 )
             }
 
@@ -176,7 +176,7 @@ fun CardDetailScreen(
                         onEditBill = { total, min, due ->
                             viewModel.editBill(bill.billId, total, min, due)
                         },
-                        modifier = Modifier.padding(horizontal = 16.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp)
                     )
                 }
             }
@@ -196,7 +196,7 @@ fun CardDetailScreen(
                         onDeleteManual = if (tx.smsBody.startsWith("manual:")) {
                             { viewModel.deleteManualTransaction(tx.id) }
                         } else null,
-                        modifier = Modifier.padding(horizontal = 16.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp)
                     )
                 }
             }
@@ -212,7 +212,7 @@ fun CardDetailScreen(
                 items(payments, key = { "payment_${it.id}" }) { payment ->
                     PaymentHistoryCard(
                         payment = payment,
-                        modifier = Modifier.padding(horizontal = 16.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp)
                     )
                 }
             }
@@ -235,7 +235,7 @@ fun CardDetailScreen(
                         onEditBill = { total, min, due ->
                             viewModel.editBill(bill.billId, total, min, due)
                         },
-                        modifier = Modifier.padding(horizontal = 16.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp)
                     )
                 }
             }
@@ -359,11 +359,11 @@ private fun CardSummaryHeader(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(16.dp),
+            .padding(horizontal = 12.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -453,7 +453,7 @@ private fun CardSummaryHeader(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Bottom,
@@ -508,7 +508,7 @@ private fun CardTransactionRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -765,7 +765,7 @@ private fun PaymentHistoryCard(
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,

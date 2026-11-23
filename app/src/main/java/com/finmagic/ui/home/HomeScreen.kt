@@ -99,7 +99,7 @@ fun HomeScreen(
             SingleChoiceSegmentedButtonRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .padding(horizontal = 12.dp, vertical = 2.dp)
             ) {
                 SegmentedButton(
                     selected = selectedTab == 0,

@@ -251,7 +251,7 @@ private fun UnparsedSmsItem(
                     onClick = onTap,
                     onLongClick = { showMenu = true }
                 )
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = 12.dp, vertical = 6.dp)
                 .testTag("sms_unparsed_item_${record.id}")
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -267,20 +267,20 @@ private fun UnparsedSmsItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(2.dp))
             Text(
                 text = record.body,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodyMedium
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(2.dp))
             Text(
                 text = "Tap to teach • Hold for options",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(top = 4.dp))
         }
 
         DropdownMenu(
@@ -325,7 +325,7 @@ private fun AllSmsItem(
                     onClick = onTap,
                     onLongClick = { showMenu = true }
                 )
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = 12.dp, vertical = 6.dp)
                 .testTag("sms_all_item_${record.id}")
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -363,7 +363,7 @@ private fun AllSmsItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(2.dp))
             Text(
                 text = record.body,
                 maxLines = 3,
@@ -371,7 +371,7 @@ private fun AllSmsItem(
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(start = 16.dp)
             )
-            HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(top = 4.dp))
         }
 
         DropdownMenu(
@@ -526,7 +526,7 @@ private fun RuleItem(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
