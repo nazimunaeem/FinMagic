@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.EventNote
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Notifications
@@ -74,7 +75,8 @@ import java.util.Locale
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     onNavigateToCategories: () -> Unit = {},
-    onNavigateToSmsReview: () -> Unit = {}
+    onNavigateToSmsReview: () -> Unit = {},
+    onNavigateToArchivedAccounts: () -> Unit = {}
 ) {
     val notificationsEnabled by viewModel.notificationsEnabled.collectAsStateWithLifecycle()
     val alertRules by viewModel.alertRules.collectAsStateWithLifecycle()
@@ -99,6 +101,7 @@ fun SettingsScreen(
     val lastBackupLabel by viewModel.lastBackupLabel.collectAsStateWithLifecycle()
     val backupUiState by viewModel.backupUiState.collectAsStateWithLifecycle()
     val restorePreview by viewModel.restorePreview.collectAsStateWithLifecycle()
+    val archivedAccountCount by viewModel.archivedAccountCount.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
 
@@ -434,6 +437,22 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
+
+            // Group: Accounts
+            SettingsGroup(title = "Accounts") {
+                SettingsItem(
+                    icon = Icons.Filled.Inventory2,
+                    title = "Archived Accounts",
+                    description = if (archivedAccountCount > 0) {
+                        "$archivedAccountCount archived account${if (archivedAccountCount == 1) "" else "s"} • Manage SMS, restore, or delete"
+                    } else {
+                        "No archived accounts • Restore or permanently delete archived accounts"
+                    },
+                    onClick = onNavigateToArchivedAccounts,
+                    modifier = Modifier.testTag("settings_archived_accounts_item"),
+                    trailing = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
+                )
             }
 
             // Group: Categories
@@ -1458,11 +1477,12 @@ fun SettingsItem(
     icon: ImageVector,
     title: String,
     description: String,
+    modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     trailing: @Composable (() -> Unit)? = null
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(16.dp),

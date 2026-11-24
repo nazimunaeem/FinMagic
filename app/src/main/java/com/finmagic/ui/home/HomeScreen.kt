@@ -60,7 +60,6 @@ import com.finmagic.ui.accounts.AccountsScreen
 import com.finmagic.ui.accounts.AccountsViewModel
 import com.finmagic.ui.accounts.AddEntryDialog
 import com.finmagic.ui.creditcards.CreditCardsScreen
-import com.finmagic.ui.settings.SettingsViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -72,15 +71,15 @@ fun HomeScreen(
     scrollToTopTrigger: Int = 0,
     onAccountClick: (Long) -> Unit = {},
     onCardClick: (Long) -> Unit = {},
-    onChartsClick: () -> Unit = {}
+    onChartsClick: () -> Unit = {},
+    onNavigateToArchivedAccounts: () -> Unit = {}
 ) {
     val accountsVm: AccountsViewModel = hiltViewModel()
-    val settingsVm: SettingsViewModel = hiltViewModel()
     val smsScanVm: SmsScanViewModel = hiltViewModel()
     val aState by accountsVm.uiState.collectAsStateWithLifecycle()
     val scanStatus by smsScanVm.scanStatus.collectAsStateWithLifecycle()
-    val cashExpenseCategories by settingsVm.cashExpenseCategories.collectAsStateWithLifecycle()
-    val cashIncomeCategories by settingsVm.cashIncomeCategories.collectAsStateWithLifecycle()
+    val cashExpenseCategories by accountsVm.cashExpenseCategories.collectAsStateWithLifecycle()
+    val cashIncomeCategories by accountsVm.cashIncomeCategories.collectAsStateWithLifecycle()
 
     var showAddDialog by remember { mutableStateOf(false) }
 
@@ -182,6 +181,7 @@ fun HomeScreen(
                     scrollToTopTrigger = scrollToTopTrigger,
                     onAccountClick = onAccountClick,
                     onCardClick = onCardClick,
+                    onNavigateToArchivedAccounts = onNavigateToArchivedAccounts,
                     viewModel = accountsVm
                 )
                 1 -> AccountsScreen(
@@ -190,6 +190,7 @@ fun HomeScreen(
                     initialTab = 1,
                     onAccountClick = onAccountClick,
                     onCardClick = onCardClick,
+                    onNavigateToArchivedAccounts = onNavigateToArchivedAccounts,
                     viewModel = accountsVm
                 )
                 2 -> CreditCardsScreen(

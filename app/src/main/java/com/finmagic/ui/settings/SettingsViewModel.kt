@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -117,6 +118,10 @@ class SettingsViewModel @Inject constructor(
 
     val lastBackupLabel: StateFlow<String?> = preferenceManager.lastBackupLabel
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val archivedAccountCount: StateFlow<Int> = accountRepository.observeArchived()
+        .map { it.size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     val notificationsEnabled: StateFlow<Boolean> = preferenceManager.notificationsEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)

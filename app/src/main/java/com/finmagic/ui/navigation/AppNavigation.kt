@@ -67,6 +67,13 @@ sealed class Screen(
         unselectedIcon = Icons.Outlined.BarChart
     )
 
+    data object ArchivedAccounts : Screen(
+        route = "archived_accounts",
+        title = "Archived Accounts",
+        selectedIcon = Icons.Filled.Inventory2,
+        unselectedIcon = Icons.Outlined.Inventory2
+    )
+
 }
 
 val bottomNavScreens = listOf(

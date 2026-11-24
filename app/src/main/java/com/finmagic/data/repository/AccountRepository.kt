@@ -999,11 +999,93 @@ class AccountRepository @Inject constructor(
         }
     }
 
+    /** Soft-deletes multiple non-Cash accounts in a single transaction. */
+    suspend fun archiveAccounts(accountIds: List<Long>): Int {
+        if (accountIds.isEmpty()) return 0
+        var archivedCount = 0
+        database.withTransaction {
+            accountIds.distinct().forEach { accountId ->
+                val account = accountDao.findByIdOnce(accountId) ?: return@forEach
+                if (account.kind == Account.KIND_CASH) return@forEach
+                transferDao.getForAccountOnce(accountId).forEach { transfer ->
+                    txnDao.deleteByTransferId(transfer.id)
+                    transferDao.deleteById(transfer.id)
+                }
+                txnDao.deleteByAccountId(accountId)
+                accountDao.setArchived(accountId, true)
+                archivedCount++
+            }
+        }
+        return archivedCount
+    }
+
     /** Brings an archived account back into the active list. */
     suspend fun restoreAccount(accountId: Long): Boolean {
         accountDao.findByIdOnce(accountId) ?: return false
         accountDao.setArchived(accountId, false)
         return true
+    }
+
+    /** Restores multiple archived accounts in a single transaction. */
+    suspend fun restoreAccounts(accountIds: List<Long>): Int {
+        if (accountIds.isEmpty()) return 0
+        var restoredCount = 0
+        database.withTransaction {
+            accountIds.distinct().forEach { accountId ->
+                val account = accountDao.findByIdOnce(accountId) ?: return@forEach
+                if (account.isArchived) {
+                    accountDao.setArchived(accountId, false)
+                    restoredCount++
+                }
+            }
+        }
+        return restoredCount
+    }
+
+    /**
+     * Permanently deletes multiple non-Cash accounts (active or archived) along with
+     * any stored SMS matched or rule-linked to them in a single transaction.
+     */
+    suspend fun deleteAccountsPermanentlyWithSms(accountIds: List<Long>): Int {
+        if (accountIds.isEmpty()) return 0
+        var deletedCount = 0
+        database.withTransaction {
+            val allSms = smsRecordDao.getAllOnce()
+            val smsIdsToDelete = linkedSetOf<Long>()
+            val validAccounts = mutableListOf<Account>()
+
+            accountIds.distinct().forEach { accountId ->
+                val account = accountDao.findByIdOnce(accountId) ?: return@forEach
+                if (account.kind == Account.KIND_CASH) return@forEach
+                validAccounts.add(account)
+                val linkedIds = smsRuleApplicationDao.getSmsRecordIdsForAccount(accountId).toSet()
+                ArchivedAccountSmsMatcher.matchingSms(
+                    account = account,
+                    allSms = allSms,
+                    linkedSmsIds = linkedIds
+                ).forEach { sms ->
+                    if (sms.id > 0L) smsIdsToDelete.add(sms.id)
+                }
+            }
+
+            if (smsIdsToDelete.isNotEmpty()) {
+                smsIdsToDelete.chunked(400).forEach { chunk ->
+                    smsRuleApplicationDao.deleteBySmsRecordIds(chunk)
+                    smsRecordDao.deleteByIds(chunk)
+                }
+            }
+
+            validAccounts.forEach { account ->
+                transferDao.getForAccountOnce(account.id).forEach { transfer ->
+                    txnDao.deleteByTransferId(transfer.id)
+                    transferDao.deleteById(transfer.id)
+                }
+                txnDao.deleteByAccountId(account.id)
+                accountDao.deleteById(account.id)
+                deletedCount++
+            }
+        }
+        return deletedCount
     }
 
     suspend fun getTransactionsOnce(accountId: Long): List<AccountTransaction> =

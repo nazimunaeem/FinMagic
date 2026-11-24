@@ -1,7 +1,12 @@
 package com.finmagic.ui.accounts
 
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -27,10 +32,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.text.KeyboardOptions
@@ -50,6 +59,11 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
+private enum class BatchAccountAction {
+    ARCHIVE,
+    DELETE_PERMANENTLY
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountsScreen(
@@ -57,6 +71,7 @@ fun AccountsScreen(
     onTabSelected: (Int) -> Unit = {},
     onAccountClick: (Long) -> Unit,
     onCardClick: (Long) -> Unit = {},
+    onNavigateToArchivedAccounts: () -> Unit = {},
     scrollToTopTrigger: Int = 0,
     showTopBar: Boolean = true,
     showPill: Boolean = true,
@@ -65,18 +80,36 @@ fun AccountsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val categoryNicknames by viewModel.categoryNicknames.collectAsStateWithLifecycle()
     val historySearchKeys by viewModel.historySearchKeys.collectAsStateWithLifecycle()
-    val settingsViewModel: com.finmagic.ui.settings.SettingsViewModel = hiltViewModel()
-    val cashExpenseCategories by settingsViewModel.cashExpenseCategories.collectAsStateWithLifecycle()
-    val cashIncomeCategories by settingsViewModel.cashIncomeCategories.collectAsStateWithLifecycle()
+    val cashExpenseCategories by viewModel.cashExpenseCategories.collectAsStateWithLifecycle()
+    val cashIncomeCategories by viewModel.cashIncomeCategories.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var showAddDialog by remember { mutableStateOf(false) }
     var showAddAccountDialog by remember { mutableStateOf(false) }
     var showManageTypesDialog by remember { mutableStateOf(false) }
     var detailTxn by remember { mutableStateOf<AccountTransactionWithAccount?>(null) }
     var editTxn by remember { mutableStateOf<AccountTransaction?>(null) }
-    var managingArchivedSmsAccountId by remember { mutableStateOf<Long?>(null) }
-    var confirmPermanentDeleteAccount by remember { mutableStateOf<Account?>(null) }
+    var selectedAccountIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var pendingBatchAction by remember { mutableStateOf<BatchAccountAction?>(null) }
     var selectedTab by rememberSaveable { mutableIntStateOf(initialTab) }
     LaunchedEffect(initialTab) { selectedTab = initialTab }
+    LaunchedEffect(selectedTab) {
+        if (selectedTab != 1 && selectedAccountIds.isNotEmpty()) {
+            selectedAccountIds = emptySet()
+        }
+    }
+    LaunchedEffect(state.summaries) {
+        val selectableIds = state.summaries
+            .filter { it.account.kind != Account.KIND_CASH }
+            .map { it.account.id }
+            .toSet()
+        if (selectedAccountIds.isNotEmpty()) {
+            selectedAccountIds = selectedAccountIds.intersect(selectableIds)
+        }
+    }
+    val isSelectionMode = selectedTab == 1 && selectedAccountIds.isNotEmpty()
+    BackHandler(enabled = isSelectionMode) {
+        selectedAccountIds = emptySet()
+    }
 
     val listState = rememberLazyListState()
     LaunchedEffect(scrollToTopTrigger) {
@@ -207,6 +240,29 @@ fun AccountsScreen(
                     ) { Text("Accounts") }
                 }
             }
+            if (isSelectionMode) {
+                val allSelectableIds = remember(state.summaries) {
+                    state.summaries
+                        .filter { it.account.kind != Account.KIND_CASH }
+                        .map { it.account.id }
+                        .toSet()
+                }
+                AccountsSelectionActionBar(
+                    selectedCount = selectedAccountIds.size,
+                    allSelected = allSelectableIds.isNotEmpty() && selectedAccountIds.size == allSelectableIds.size,
+                    onClear = { selectedAccountIds = emptySet() },
+                    onSelectAll = {
+                        selectedAccountIds = if (selectedAccountIds.size == allSelectableIds.size) {
+                            emptySet()
+                        } else {
+                            allSelectableIds
+                        }
+                    },
+                    onArchive = { pendingBatchAction = BatchAccountAction.ARCHIVE },
+                    onDeletePermanently = { pendingBatchAction = BatchAccountAction.DELETE_PERMANENTLY },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+            }
             LazyColumn(
                 state = listState,
                 contentPadding = PaddingValues(
@@ -317,9 +373,48 @@ fun AccountsScreen(
                                 groupSummaries.sortedByDescending { it.displayBalance },
                                 key = { "account_${it.account.id}" }
                             ) { summary ->
+                                val acctId = summary.account.id
+                                val selectable = summary.account.kind != Account.KIND_CASH
+                                val isSelected = acctId in selectedAccountIds
                                 AccountCard(
                                     summary = summary,
-                                    onClick = { onAccountClick(summary.account.id) },
+                                    onClick = {
+                                        if (isSelectionMode) {
+                                            if (selectable) {
+                                                selectedAccountIds = if (isSelected) {
+                                                    selectedAccountIds - acctId
+                                                } else {
+                                                    selectedAccountIds + acctId
+                                                }
+                                            } else {
+                                                Toast.makeText(
+                                                    context,
+                                                    "Built-in Cash account cannot be archived or deleted",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        } else {
+                                            onAccountClick(acctId)
+                                        }
+                                    },
+                                    onLongClick = {
+                                        if (selectable) {
+                                            selectedAccountIds = if (isSelected) {
+                                                selectedAccountIds - acctId
+                                            } else {
+                                                selectedAccountIds + acctId
+                                            }
+                                        } else {
+                                            Toast.makeText(
+                                                context,
+                                                "Built-in Cash account cannot be archived or deleted",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    },
+                                    selectionMode = isSelectionMode,
+                                    isSelected = isSelected,
+                                    selectable = selectable,
                                     modifier = Modifier.padding(horizontal = 12.dp)
                                 )
                             }
@@ -353,23 +448,12 @@ fun AccountsScreen(
                         }
                     }
 
-                    if (state.archivedAccountsWithSms.isNotEmpty()) {
-                        item {
-                            Text(
-                                text = "ARCHIVED (${state.archivedAccountsWithSms.size})",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 12.dp).padding(top = 3.dp, bottom = 0.dp)
-                            )
-                        }
-                        items(state.archivedAccountsWithSms, key = { "archived_${it.account.id}" }) { item ->
-                            ArchivedAccountRow(
-                                item = item,
-                                onRestore = { viewModel.restoreAccount(item.account.id) },
-                                onManageSms = { managingArchivedSmsAccountId = item.account.id },
-                                onDeletePermanently = { confirmPermanentDeleteAccount = item.account },
-                                modifier = Modifier.padding(horizontal = 12.dp)
+                    if (state.archivedAccounts.isNotEmpty()) {
+                        item(key = "archived_accounts_nav_card") {
+                            ArchivedAccountsNavCard(
+                                count = state.archivedAccounts.size,
+                                onClick = onNavigateToArchivedAccounts,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                             )
                         }
                     }
@@ -603,31 +687,19 @@ fun AccountsScreen(
         )
     }
 
-    managingArchivedSmsAccountId?.let { acctId ->
-        val liveItem = state.archivedAccountsWithSms.firstOrNull { it.account.id == acctId }
-        if (liveItem != null) {
-            ArchivedAccountSmsDialog(
-                item = liveItem,
-                onDismiss = { managingArchivedSmsAccountId = null },
-                onDeleteSms = { smsId -> viewModel.deleteArchivedAccountSms(smsId) },
-                onDeleteAllSms = { ids -> viewModel.deleteAllArchivedAccountSms(ids) },
-                onRequestPermanentDelete = {
-                    managingArchivedSmsAccountId = null
-                    confirmPermanentDeleteAccount = liveItem.account
-                }
-            )
-        } else {
-            managingArchivedSmsAccountId = null
-        }
-    }
-
-    confirmPermanentDeleteAccount?.let { acct ->
-        PermanentDeleteAccountDialog(
-            account = acct,
-            onDismiss = { confirmPermanentDeleteAccount = null },
+    pendingBatchAction?.let { action ->
+        BatchAccountsActionDialog(
+            action = action,
+            selectedCount = selectedAccountIds.size,
+            onDismiss = { pendingBatchAction = null },
             onConfirm = {
-                viewModel.deleteAccountPermanently(acct.id)
-                confirmPermanentDeleteAccount = null
+                val ids = selectedAccountIds.toList()
+                when (action) {
+                    BatchAccountAction.ARCHIVE -> viewModel.archiveAccounts(ids)
+                    BatchAccountAction.DELETE_PERMANENTLY -> viewModel.deleteAccountsPermanentlyWithSms(ids)
+                }
+                selectedAccountIds = emptySet()
+                pendingBatchAction = null
             }
         )
     }
@@ -1406,28 +1478,51 @@ private fun CardsLiabilitySummaryCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun AccountCard(
     summary: AccountSummary,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
+    selectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    selectable: Boolean = true
 ) {
     val account = summary.account
     val balance = summary.displayBalance
     val isLiability = account.isLiability
+    val haptic = LocalHapticFeedback.current
 
     val kindLabel = buildString {
         append(account.effectiveType)
         if (isLiability) append(" · Liability")
         if (!account.includeInTotal) append(" · Excluded")
+        if (selectionMode && !selectable) append(" · Built-in")
+    }
+
+    val containerColor = when {
+        isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+        selectionMode && !selectable -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)
+        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
     }
 
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    if (onLongClick != null) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onLongClick()
+                    }
+                }
+            )
+            .testTag("account_card_${account.id}"),
         shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+        border = if (isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+        colors = CardDefaults.cardColors(containerColor = containerColor),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
@@ -1437,33 +1532,45 @@ internal fun AccountCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (isLiability) MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
-                        else MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = accountIcon(account.kind),
-                    contentDescription = kindLabel,
-                    tint = if (isLiability) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp)
+            if (selectionMode && selectable) {
+                Checkbox(
+                    checked = isSelected,
+                    onCheckedChange = { onClick() },
+                    modifier = Modifier.testTag("account_select_checkbox_${account.id}")
                 )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (isLiability) MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
+                            else MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = accountIcon(account.kind),
+                        contentDescription = kindLabel,
+                        tint = if (isLiability) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = account.displayName,
                     style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = kindLabel,
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (isLiability) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (isLiability) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
             val isNegativeDisplay = if (isLiability) balance > 0.005 else balance < -0.005
@@ -1475,6 +1582,198 @@ internal fun AccountCard(
             )
         }
     }
+}
+
+@Composable
+private fun AccountsSelectionActionBar(
+    selectedCount: Int,
+    allSelected: Boolean,
+    onClear: () -> Unit,
+    onSelectAll: () -> Unit,
+    onArchive: () -> Unit,
+    onDeletePermanently: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("accounts_selection_bar"),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(
+                onClick = onClear,
+                modifier = Modifier.testTag("accounts_clear_selection")
+            ) {
+                Icon(Icons.Filled.Close, contentDescription = "Clear selection")
+            }
+            Text(
+                text = "$selectedCount selected",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(
+                onClick = onSelectAll,
+                modifier = Modifier.testTag("accounts_select_all")
+            ) {
+                Icon(
+                    imageVector = if (allSelected) Icons.Filled.Deselect else Icons.Filled.SelectAll,
+                    contentDescription = if (allSelected) "Deselect all" else "Select all"
+                )
+            }
+            FilledTonalButton(
+                onClick = onArchive,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("accounts_batch_archive_button")
+            ) {
+                Icon(Icons.Filled.Inventory2, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Archive", style = MaterialTheme.typography.labelMedium)
+            }
+            Spacer(Modifier.width(4.dp))
+            IconButton(
+                onClick = onDeletePermanently,
+                modifier = Modifier.testTag("accounts_batch_delete_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.DeleteForever,
+                    contentDescription = "Delete selected permanently",
+                    tint = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArchivedAccountsNavCard(
+    count: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag("open_archived_accounts_button"),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Inventory2,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Archived Accounts ($count)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Manage stored SMS, restore, or delete permanently",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(
+                imageVector = Icons.Filled.ChevronRight,
+                contentDescription = "Open Archived Accounts",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun BatchAccountsActionDialog(
+    action: BatchAccountAction,
+    selectedCount: Int,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    val isDelete = action == BatchAccountAction.DELETE_PERMANENTLY
+    val noun = if (selectedCount == 1) "account" else "accounts"
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                imageVector = if (isDelete) Icons.Filled.DeleteForever else Icons.Filled.Inventory2,
+                contentDescription = null,
+                tint = if (isDelete) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+            )
+        },
+        title = {
+            Text(
+                if (isDelete) "Delete $selectedCount $noun permanently?"
+                else "Archive $selectedCount $noun?"
+            )
+        },
+        text = {
+            Text(
+                if (isDelete) {
+                    "This permanently deletes the selected $noun, their transactions, and their stored SMS messages in FinMagic. You cannot undo this."
+                } else {
+                    "Selected $noun and their transactions will be moved to Archived Accounts so SMS rescans will not recreate them. You can restore them or clear SMS later."
+                }
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = if (isDelete) {
+                    ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                } else {
+                    ButtonDefaults.buttonColors()
+                },
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag(if (isDelete) "confirm_batch_delete_accounts" else "confirm_batch_archive_accounts")
+            ) {
+                Text(if (isDelete) "Delete Permanently" else "Archive")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.minimumInteractiveComponentSize()
+            ) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable

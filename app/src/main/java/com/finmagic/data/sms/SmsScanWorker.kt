@@ -2,8 +2,10 @@ package com.finmagic.data.sms
 
 import android.content.Context
 import androidx.hilt.work.HiltWorker
+import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.finmagic.data.local.AppDatabase
 import com.finmagic.data.local.PreferenceManager
 import com.finmagic.data.local.dao.BillDao
 import com.finmagic.data.local.dao.CardPaymentDao
@@ -23,13 +25,16 @@ import com.finmagic.notification.NotificationHelper
 import com.finmagic.notification.SmsScheduler
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.yield
 
 @HiltWorker
 class SmsScanWorker @AssistedInject constructor(
     @Assisted context: Context,
     @Assisted params: WorkerParameters,
+    private val database: AppDatabase,
     private val smsReader: SmsReader,
     private val cardDao: CreditCardDao,
     private val billDao: BillDao,
@@ -46,6 +51,7 @@ class SmsScanWorker @AssistedInject constructor(
 
     companion object {
         private const val TAG = "SmsScanWorker"
+        private const val TXN_CHUNK_SIZE = 25
 
         // Process-wide lock: the periodic scan ("sms_scan") and on-demand scans
         // ("sms_scan_now") use different WorkManager unique names and could otherwise
@@ -66,6 +72,8 @@ class SmsScanWorker @AssistedInject constructor(
                     val isFirstScan = !preferenceManager.isFirstScanComplete.first()
 
                     if (scanMode == SmsScheduler.MODE_STARTUP_RECENT_50) {
+                        // Let the first Compose frame settle before Telephony/Room heavy work starts.
+                        delay(400L)
                         scanStatusManager.startScan(
                             phase = ScanPhase.RECENT_50,
                             message = "Scanning last 50 SMS...",
@@ -74,13 +82,17 @@ class SmsScanWorker @AssistedInject constructor(
                         val recent = smsReader.readRecentSms(count = 50).reversed()
                         val filteredRecent = recent.filter { smsReader.matchesFinancialKeywords(it.address, it.body) }
                         var processedRecent = 0
-                        for (message in filteredRecent) {
-                            processedRecent++
-                            try {
-                                val parsed = processMessage(message, debitAlertsEnabled, debitThreshold)
-                                if (parsed != null) parsedCount++
-                            } catch (e: Exception) {
-                                activityLogger.error(TAG, "Error processing recent SMS #$processedRecent: ${e.message}")
+                        for (chunk in filteredRecent.chunked(TXN_CHUNK_SIZE)) {
+                            database.withTransaction {
+                                for (message in chunk) {
+                                    processedRecent++
+                                    try {
+                                        val parsed = processMessage(message, debitAlertsEnabled, debitThreshold)
+                                        if (parsed != null) parsedCount++
+                                    } catch (e: Exception) {
+                                        activityLogger.error(TAG, "Error processing recent SMS #$processedRecent: ${e.message}")
+                                    }
+                                }
                             }
                             scanStatusManager.updateProgress(
                                 phase = ScanPhase.RECENT_50,
@@ -89,6 +101,7 @@ class SmsScanWorker @AssistedInject constructor(
                                 parsed = parsedCount,
                                 message = "Scanning last 50 SMS ($processedRecent/${filteredRecent.size})..."
                             )
+                            yield()
                         }
                         finalizeScanPass()
 
@@ -189,29 +202,34 @@ class SmsScanWorker @AssistedInject constructor(
         var parsedCount = 0
         var errorCount = 0
         smsReader.readAllSmsStream(afterTimestamp = afterTimestamp).collect { batch ->
-            for (message in batch) {
-                try {
-                    totalRead++
-                    val parsed = processMessage(
-                        message,
-                        debitAlertsEnabled,
-                        debitThreshold
-                    )
-                    if (parsed != null) {
-                        parsedCount++
+            for (chunk in batch.chunked(TXN_CHUNK_SIZE)) {
+                database.withTransaction {
+                    for (message in chunk) {
+                        try {
+                            totalRead++
+                            val parsed = processMessage(
+                                message,
+                                debitAlertsEnabled,
+                                debitThreshold
+                            )
+                            if (parsed != null) {
+                                parsedCount++
+                            }
+                        } catch (e: Exception) {
+                            errorCount++
+                            activityLogger.error(TAG, "Error processing SMS #$totalRead: ${e.message}")
+                        }
                     }
-                } catch (e: Exception) {
-                    errorCount++
-                    activityLogger.error(TAG, "Error processing SMS #$totalRead: ${e.message}")
                 }
+                scanStatusManager.updateProgress(
+                    phase = phase,
+                    processed = totalRead,
+                    total = 0,
+                    parsed = parsedCount,
+                    message = "$label ($totalRead SMS checked)..."
+                )
+                yield()
             }
-            scanStatusManager.updateProgress(
-                phase = phase,
-                processed = totalRead,
-                total = 0,
-                parsed = parsedCount,
-                message = "$label ($totalRead SMS checked)..."
-            )
             activityLogger.info(TAG, "Batch done: $totalRead total, $parsedCount parsed, $errorCount errors")
         }
         activityLogger.info(TAG, "$label completed. Total: $totalRead, Parsed: $parsedCount, Errors: $errorCount")

@@ -154,39 +154,123 @@ class BackupManager @Inject constructor(
         private val gson = GsonBuilder()
             .setPrettyPrinting()
             .serializeNulls()
+            .serializeSpecialFloatingPointValues()
             .setExclusionStrategies(lazyDelegateExclusion)
             .create()
 
-        fun serializeBackup(backup: FinMagicBackup): String = gson.toJson(backup)
+        private fun finiteOrZero(value: Double): Double = if (value.isFinite()) value else 0.0
+
+        private fun <T> safeList(list: List<T>?): List<T> = list ?: emptyList()
+
+        private fun <T> safeSet(set: Set<T>?): Set<T> = set ?: emptySet()
+
+        private fun <K, V> safeMap(map: Map<K, V>?): Map<K, V> = map ?: emptyMap()
+
+        private fun safeString(value: String?, fallback: String = ""): String = value ?: fallback
+
+        private fun sanitizeBackup(raw: FinMagicBackup): FinMagicBackup {
+            val rawDb = raw.database as? BackupDatabasePayload
+                ?: throw IllegalArgumentException("Backup file is missing required database section.")
+            val rawSnap = (raw.balancesSnapshot as? BackupBalancesSnapshot) ?: BackupBalancesSnapshot()
+            val rawPrefs = (raw.preferences as? BackupPreferencesPayload) ?: BackupPreferencesPayload()
+
+            val sanitizedDb = BackupDatabasePayload(
+                accounts = safeList(rawDb.accounts),
+                accountTransactions = safeList(rawDb.accountTransactions),
+                transfers = safeList(rawDb.transfers),
+                creditCards = safeList(rawDb.creditCards),
+                cardTransactions = safeList(rawDb.cardTransactions),
+                bills = safeList(rawDb.bills),
+                cardPayments = safeList(rawDb.cardPayments),
+                smsTeachingRules = safeList(rawDb.smsTeachingRules),
+                smsRuleApplications = safeList(rawDb.smsRuleApplications),
+                smsRecords = safeList(rawDb.smsRecords)
+            )
+            val sanitizedSnap = BackupBalancesSnapshot(
+                netAsset = finiteOrZero(rawSnap.netAsset),
+                assetsTotal = finiteOrZero(rawSnap.assetsTotal),
+                accountLiabilitiesTotal = finiteOrZero(rawSnap.accountLiabilitiesTotal),
+                cardOutstandingTotal = finiteOrZero(rawSnap.cardOutstandingTotal),
+                accounts = safeList(rawSnap.accounts),
+                cards = safeList(rawSnap.cards)
+            )
+            val sanitizedPrefs = BackupPreferencesPayload(
+                notificationsEnabled = rawPrefs.notificationsEnabled,
+                alertRules = safeSet(rawPrefs.alertRules),
+                alertTime = safeString(rawPrefs.alertTime, "09:00").ifBlank { "09:00" },
+                largeDebitAlerts = rawPrefs.largeDebitAlerts,
+                largeDebitThreshold = finiteOrZero(rawPrefs.largeDebitThreshold).let {
+                    if (it > 0.0) it else 10_000.0
+                },
+                biometricLockEnabled = rawPrefs.biometricLockEnabled,
+                themeMode = safeString(rawPrefs.themeMode, com.finmagic.data.local.AppThemeMode.LIGHT.name),
+                categoryNicknames = safeMap(rawPrefs.categoryNicknames),
+                cashExpenseCategories = safeList(rawPrefs.cashExpenseCategories),
+                cashIncomeCategories = safeList(rawPrefs.cashIncomeCategories),
+                recurringTemplates = safeList(rawPrefs.recurringTemplates),
+                customAccountTypes = safeList(rawPrefs.customAccountTypes),
+                webPortalPort = rawPrefs.webPortalPort.coerceIn(1024, 65535),
+                webPortalAutoStart = rawPrefs.webPortalAutoStart,
+                autoUpdateCheckEnabled = rawPrefs.autoUpdateCheckEnabled,
+                firstScanComplete = rawPrefs.firstScanComplete,
+                historySearchKeys = safeList(rawPrefs.historySearchKeys)
+            )
+            return FinMagicBackup(
+                schemaVersion = raw.schemaVersion,
+                appVersion = safeString(raw.appVersion, "Unknown").ifBlank { "Unknown" },
+                createdAt = raw.createdAt,
+                balancesSnapshot = sanitizedSnap,
+                database = sanitizedDb,
+                preferences = sanitizedPrefs
+            )
+        }
+
+        fun serializeBackup(backup: FinMagicBackup): String = gson.toJson(sanitizeBackup(backup))
 
         fun parseBackup(json: String): FinMagicBackup {
-            if (json.isBlank()) {
+            val trimmed = json.trimStart('\uFEFF').trim()
+            if (trimmed.isBlank()) {
                 throw IllegalArgumentException("Backup file is empty.")
             }
-            val parsed = runCatching { gson.fromJson(json, FinMagicBackup::class.java) }
-                .getOrElse { throw IllegalArgumentException("Invalid JSON backup format.", it) }
+            if (trimmed.startsWith("Record Type,", ignoreCase = true) ||
+                trimmed.startsWith("Date,Direction", ignoreCase = true)
+            ) {
+                throw IllegalArgumentException(
+                    "This looks like a CSV backup. Use 'Import / Restore from CSV' instead."
+                )
+            }
+            if (!trimmed.startsWith("{")) {
+                throw IllegalArgumentException(
+                    "Invalid JSON backup format: file must begin with '{'."
+                )
+            }
+            val parsed = runCatching { gson.fromJson(trimmed, FinMagicBackup::class.java) }
+                .getOrElse { err ->
+                    val detail = err.message?.take(120)?.let { " ($it)" }.orEmpty()
+                    throw IllegalArgumentException("Invalid JSON backup format$detail", err)
+                }
                 ?: throw IllegalArgumentException("Invalid JSON backup format.")
             if (parsed.schemaVersion < 1) {
                 throw IllegalArgumentException("Unsupported backup schema version: ${parsed.schemaVersion}")
             }
-            if (parsed.database == null || parsed.balancesSnapshot == null) {
-                throw IllegalArgumentException("Backup file is missing required database sections.")
-            }
-            return parsed
+            return sanitizeBackup(parsed)
         }
 
-        fun summarizeBackup(backup: FinMagicBackup): BackupPreviewSummary = BackupPreviewSummary(
-            createdAt = backup.createdAt,
-            appVersion = backup.appVersion.ifBlank { "Unknown" },
-            netAsset = backup.balancesSnapshot.netAsset,
-            accountCount = backup.database.accounts.size,
-            transactionCount = backup.database.accountTransactions.size + backup.database.cardTransactions.size,
-            cardCount = backup.database.creditCards.size,
-            billCount = backup.database.bills.size,
-            ruleCount = backup.database.smsTeachingRules.size,
-            accountBalances = backup.balancesSnapshot.accounts,
-            cardOutstandings = backup.balancesSnapshot.cards
-        )
+        fun summarizeBackup(backup: FinMagicBackup): BackupPreviewSummary {
+            val clean = sanitizeBackup(backup)
+            return BackupPreviewSummary(
+                createdAt = clean.createdAt,
+                appVersion = clean.appVersion.ifBlank { "Unknown" },
+                netAsset = clean.balancesSnapshot.netAsset,
+                accountCount = clean.database.accounts.size,
+                transactionCount = clean.database.accountTransactions.size + clean.database.cardTransactions.size,
+                cardCount = clean.database.creditCards.size,
+                billCount = clean.database.bills.size,
+                ruleCount = clean.database.smsTeachingRules.size,
+                accountBalances = clean.balancesSnapshot.accounts,
+                cardOutstandings = clean.balancesSnapshot.cards
+            )
+        }
     }
 
     fun observeAutoBackupTriggers(): Flow<Unit> {
@@ -262,7 +346,7 @@ class BackupManager @Inject constructor(
                     isLiability = acct.isLiability,
                     includeInTotal = acct.includeInTotal,
                     currency = acct.currency,
-                    balance = bal
+                    balance = finiteOrZero(bal)
                 )
             }
 
@@ -306,23 +390,27 @@ class BackupManager @Inject constructor(
                     displayName = card.displayName,
                     bankName = card.bankName,
                     cardLast4 = card.cardLast4,
-                    creditLimit = card.creditLimit,
+                    creditLimit = finiteOrZero(card.creditLimit),
                     currency = card.creditLimitCurrency,
-                    outstanding = outstanding,
-                    unpaidBillDue = unpaidBillDue,
-                    outstandingAnchor = card.outstandingAnchor,
+                    outstanding = finiteOrZero(outstanding),
+                    unpaidBillDue = finiteOrZero(unpaidBillDue),
+                    outstandingAnchor = card.outstandingAnchor?.takeIf { it.isFinite() },
                     outstandingAnchorAt = card.outstandingAnchorAt
                 )
             }
 
-            val assetsTotal = accountSnapshots
-                .filter { it.includeInTotal && !it.isLiability }
-                .sumOf { it.balance }
-            val accountLiabilitiesTotal = accountSnapshots
-                .filter { it.includeInTotal && it.isLiability }
-                .sumOf { abs(it.balance) }
-            val cardOutstandingTotal = cardSnapshots.sumOf { it.outstanding }
-            val netAsset = assetsTotal - accountLiabilitiesTotal - cardOutstandingTotal
+            val assetsTotal = finiteOrZero(
+                accountSnapshots
+                    .filter { it.includeInTotal && !it.isLiability }
+                    .sumOf { it.balance }
+            )
+            val accountLiabilitiesTotal = finiteOrZero(
+                accountSnapshots
+                    .filter { it.includeInTotal && it.isLiability }
+                    .sumOf { abs(it.balance) }
+            )
+            val cardOutstandingTotal = finiteOrZero(cardSnapshots.sumOf { it.outstanding })
+            val netAsset = finiteOrZero(assetsTotal - accountLiabilitiesTotal - cardOutstandingTotal)
 
             FinMagicBackup(
                 schemaVersion = FinMagicBackup.CURRENT_SCHEMA_VERSION,
@@ -356,21 +444,32 @@ class BackupManager @Inject constructor(
         runCatching {
             val json = serializeBackup(buildBackup())
             val labels = mutableListOf<String>()
+            var lastError: Throwable? = null
 
             val safUriStr = preferenceManager.persistentBackupUri.first()
             if (!safUriStr.isNullOrBlank()) {
                 val uri = Uri.parse(safUriStr)
-                writeTextToUri(uri, json)
-                labels.add(resolveDisplayName(uri) ?: "Custom Backup File")
+                runCatching {
+                    writeTextToUri(uri, json)
+                    labels.add(resolveDisplayName(uri) ?: "Custom Backup File")
+                }.onFailure { err ->
+                    lastError = err
+                }
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                writeToMediaStoreDownloads(json)
-                labels.add("$PERSISTENT_RELATIVE_DIR/$PERSISTENT_FILE_NAME")
+                runCatching {
+                    writeToMediaStoreDownloads(json)
+                    labels.add("$PERSISTENT_RELATIVE_DIR/$PERSISTENT_FILE_NAME")
+                }.onFailure { err ->
+                    if (lastError == null) lastError = err
+                }
             }
 
             if (labels.isEmpty()) {
-                error("Choose a backup file location below to save outside app storage on this Android version.")
+                throw lastError ?: IllegalStateException(
+                    "Choose a backup file location below to save outside app storage on this Android version."
+                )
             }
 
             val label = labels.joinToString(" & ")

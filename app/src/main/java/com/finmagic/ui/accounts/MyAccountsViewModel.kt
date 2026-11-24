@@ -10,6 +10,7 @@ import com.finmagic.data.repository.AccountRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -34,6 +35,11 @@ class MyAccountsViewModel @Inject constructor(
     val summaries: StateFlow<List<AccountSummary>> =
         accountRepository.observeSummaries(monthStart)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val archivedCount: StateFlow<Int> =
+        accountRepository.observeArchived()
+            .map { it.size }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     val allAccountTypes: StateFlow<List<AccountTypeConfig>> =
         preferenceManager.allAccountTypes
@@ -61,6 +67,14 @@ class MyAccountsViewModel @Inject constructor(
 
     fun deleteAccount(accountId: Long) {
         viewModelScope.launch { accountRepository.deleteAccount(accountId) }
+    }
+
+    fun archiveAccounts(accountIds: List<Long>) {
+        viewModelScope.launch { accountRepository.archiveAccounts(accountIds) }
+    }
+
+    fun deleteAccountsPermanentlyWithSms(accountIds: List<Long>) {
+        viewModelScope.launch { accountRepository.deleteAccountsPermanentlyWithSms(accountIds) }
     }
 
     fun adjustBalance(targetBalance: Double, accountId: Long) {

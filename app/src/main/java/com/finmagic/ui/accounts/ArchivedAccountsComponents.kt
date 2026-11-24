@@ -1,7 +1,10 @@
 package com.finmagic.ui.accounts
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +30,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,6 +48,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,17 +62,23 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun ArchivedAccountRow(
     item: ArchivedAccountWithSms,
     onRestore: () -> Unit,
     onManageSms: () -> Unit,
     onDeletePermanently: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    selectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    onToggleSelect: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null
 ) {
     val account = item.account
     val smsCount = item.matchingSms.size
     val canDeletePermanently = smsCount == 0
+    val haptic = LocalHapticFeedback.current
 
     val subtitleParts = buildList {
         if (account.accountMask.isNotBlank() &&
@@ -80,17 +92,33 @@ internal fun ArchivedAccountRow(
         )
     }
 
+    val containerColor = if (isSelected) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .then(
-                if (smsCount > 0) Modifier.clickable(onClick = onManageSms)
-                else Modifier
+            .combinedClickable(
+                onClick = {
+                    if (selectionMode) {
+                        onToggleSelect?.invoke()
+                    } else if (smsCount > 0) {
+                        onManageSms()
+                    }
+                },
+                onLongClick = {
+                    if (onLongClick != null) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onLongClick()
+                    }
+                }
             ),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-        ),
+        border = if (isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+        colors = CardDefaults.cardColors(containerColor = containerColor),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(
@@ -103,19 +131,27 @@ internal fun ArchivedAccountRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.12f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = accountIcon(account.kind),
-                        contentDescription = account.kind,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
+                if (selectionMode) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onToggleSelect?.invoke() },
+                        modifier = Modifier.testTag("archived_select_checkbox_${account.id}")
                     )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = accountIcon(account.kind),
+                            contentDescription = account.kind,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -137,13 +173,15 @@ internal fun ArchivedAccountRow(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                TextButton(
-                    onClick = onRestore,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .testTag("archived_restore_button_${account.id}")
-                ) {
-                    Text("Restore")
+                if (!selectionMode) {
+                    TextButton(
+                        onClick = onRestore,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("archived_restore_button_${account.id}")
+                    ) {
+                        Text("Restore")
+                    }
                 }
             }
 

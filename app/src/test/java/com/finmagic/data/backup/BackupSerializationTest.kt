@@ -161,4 +161,60 @@ class BackupSerializationTest {
     fun parseBackup_rejectsMalformedJson() {
         BackupManager.parseBackup("{not valid json")
     }
+
+    @Test
+    fun parseBackup_handlesUtf8BomAndNullOptionalFields() {
+        val jsonWithBomAndNulls = "\uFEFF" + """
+            {
+              "schemaVersion": 1,
+              "appVersion": null,
+              "createdAt": 1774000000000,
+              "balancesSnapshot": null,
+              "database": {
+                "accounts": null,
+                "accountTransactions": [],
+                "transfers": null,
+                "creditCards": [],
+                "cardTransactions": null,
+                "bills": [],
+                "cardPayments": null,
+                "smsTeachingRules": [],
+                "smsRuleApplications": null,
+                "smsRecords": []
+              },
+              "preferences": null
+            }
+        """.trimIndent()
+
+        val parsed = BackupManager.parseBackup(jsonWithBomAndNulls)
+        val summary = BackupManager.summarizeBackup(parsed)
+        assertEquals("Unknown", summary.appVersion)
+        assertEquals(0, summary.accountCount)
+        assertEquals(0.0, summary.netAsset, 0.01)
+        assertTrue(parsed.preferences.categoryNicknames.isEmpty())
+        assertTrue(parsed.preferences.historySearchKeys.isEmpty())
+    }
+
+    @Test
+    fun parseBackup_csvGivesHelpfulError() {
+        val error = runCatching {
+            BackupManager.parseBackup("Record Type,Date,Direction,Amount\nACCOUNT_TXN,2026-01-01,OUT,100")
+        }.exceptionOrNull()
+        assertTrue(error is IllegalArgumentException)
+        assertTrue(error?.message?.contains("CSV", ignoreCase = true) == true)
+    }
+
+    @Test
+    fun serializeBackup_sanitizesNonFiniteNumbers() {
+        val backup = FinMagicBackup(
+            balancesSnapshot = BackupBalancesSnapshot(
+                netAsset = Double.NaN,
+                assetsTotal = Double.POSITIVE_INFINITY
+            )
+        )
+        val json = BackupManager.serializeBackup(backup)
+        val parsed = BackupManager.parseBackup(json)
+        assertEquals(0.0, parsed.balancesSnapshot.netAsset, 0.001)
+        assertEquals(0.0, parsed.balancesSnapshot.assetsTotal, 0.001)
+    }
 }

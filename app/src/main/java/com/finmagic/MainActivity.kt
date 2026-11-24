@@ -67,6 +67,7 @@ import com.finmagic.data.local.AppThemeMode
 import com.finmagic.data.local.PreferenceManager
 import com.finmagic.ui.accounts.AccountDetailScreen
 import com.finmagic.ui.accounts.AccountsScreen
+import com.finmagic.ui.accounts.ArchivedAccountsScreen
 import com.finmagic.ui.accounts.MyAccountsScreen
 import com.finmagic.ui.charts.ChartsScreen
 import com.finmagic.ui.creditcards.CardDetailScreen
@@ -308,6 +309,11 @@ fun MainApp(
                         navController.navigate(Screen.Charts.route) {
                             launchSingleTop = true
                         }
+                    },
+                    onNavigateToArchivedAccounts = {
+                        navController.navigate(Screen.ArchivedAccounts.route) {
+                            launchSingleTop = true
+                        }
                     }
                 )
             }
@@ -347,6 +353,11 @@ fun MainApp(
                     onTabSelected = { accountsInitialTab = it },
                     onAccountClick = { accountId ->
                         navController.navigate("accounts/$accountId")
+                    },
+                    onNavigateToArchivedAccounts = {
+                        navController.navigate(Screen.ArchivedAccounts.route) {
+                            launchSingleTop = true
+                        }
                     }
                 )
             }
@@ -355,8 +366,16 @@ fun MainApp(
                     onBack = { navController.popBackStack() },
                     onAccountClick = { accountId ->
                         navController.navigate("accounts/$accountId")
+                    },
+                    onNavigateToArchivedAccounts = {
+                        navController.navigate(Screen.ArchivedAccounts.route) {
+                            launchSingleTop = true
+                        }
                     }
                 )
+            }
+            composable(Screen.ArchivedAccounts.route) {
+                ArchivedAccountsScreen(onBack = { navController.popBackStack() })
             }
             composable(
                 route = "accounts/{accountId}",
@@ -367,7 +386,12 @@ fun MainApp(
             composable(Screen.Settings.route) {
                 SettingsScreen(
                     onNavigateToCategories = { navController.navigate(Screen.Categories.route) },
-                    onNavigateToSmsReview = { navController.navigate(Screen.SmsReview.route) }
+                    onNavigateToSmsReview = { navController.navigate(Screen.SmsReview.route) },
+                    onNavigateToArchivedAccounts = {
+                        navController.navigate(Screen.ArchivedAccounts.route) {
+                            launchSingleTop = true
+                        }
+                    }
                 )
             }
             composable(Screen.Categories.route) {

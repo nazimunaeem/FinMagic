@@ -16,11 +16,11 @@ import com.finmagic.data.local.entity.CardPayment
 import com.finmagic.data.local.entity.CardTransaction
 import com.finmagic.data.local.entity.CreditCard
 import com.finmagic.data.repository.AccountRepository
-import com.finmagic.data.repository.ArchivedAccountWithSms
 import com.finmagic.data.repository.BillRepository
 import com.finmagic.data.repository.CardRepository
 import com.finmagic.data.sms.parsers.TxnCategory
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,7 +28,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -64,7 +66,6 @@ data class AccountsUiState(
     val expensesByCategory: List<CategoryTotal> = emptyList(),
     val incomeByCategory: List<CategoryTotal> = emptyList(),
     val archivedAccounts: List<Account> = emptyList(),
-    val archivedAccountsWithSms: List<ArchivedAccountWithSms> = emptyList(),
     val recentTransactions: List<AccountTransactionWithAccount> = emptyList(),
     val balanceTrails: Map<Long, AccountRepository.BalanceTrail> = emptyMap()
 )
@@ -87,6 +88,12 @@ class AccountsViewModel @Inject constructor(
     val selectedYear: StateFlow<Int> = _selectedYear.asStateFlow()
     val selectedMonth: StateFlow<Int> = _selectedMonth.asStateFlow()
 
+    val cashExpenseCategories: StateFlow<List<String>> = preferenceManager.cashExpenseCategories
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val cashIncomeCategories: StateFlow<List<String>> = preferenceManager.cashIncomeCategories
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     private val monthRange: Flow<Pair<Long, Long>> =
         combine(_selectedYear, _selectedMonth) { year, month ->
             val start = startOfMonthMillis(year, month)
@@ -98,7 +105,7 @@ class AccountsViewModel @Inject constructor(
         val summaries: List<AccountSummary>,
         val expenses: List<CategoryTotal>,
         val income: List<CategoryTotal>,
-        val archivedWithSms: List<ArchivedAccountWithSms>,
+        val archivedAccounts: List<Account>,
         val transactions: List<AccountTransactionWithAccount>,
         val balanceTrails: Map<Long, AccountRepository.BalanceTrail>
     )
@@ -128,10 +135,10 @@ class AccountsViewModel @Inject constructor(
                 accountRepository.observeSummaries(ms, me),
                 accountRepository.observeMonthlyExpenseByCategory(ms, me),
                 accountRepository.observeMonthlyIncomeByCategory(ms, me),
-                accountRepository.observeArchivedWithSms(),
+                accountRepository.observeArchived(),
                 txnsCombined
-            ) { summaries, expenses, income, archivedWithSms, (transactions, trails) ->
-                LedgerBundle(summaries, expenses, income, archivedWithSms, transactions, trails)
+            ) { summaries, expenses, income, archivedAccounts, (transactions, trails) ->
+                LedgerBundle(summaries, expenses, income, archivedAccounts, transactions, trails)
             }
             val cardsActivityFlow = combine(
                 billRepository.getAllBills(),
@@ -216,12 +223,13 @@ class AccountsViewModel @Inject constructor(
                     customAccountTypes = meta.customTypes,
                     expensesByCategory = ledger.expenses.filter { it.total > 0.0 },
                     incomeByCategory = ledger.income.filter { it.total > 0.0 },
-                    archivedAccounts = ledger.archivedWithSms.map { it.account },
-                    archivedAccountsWithSms = ledger.archivedWithSms,
+                    archivedAccounts = ledger.archivedAccounts,
                     recentTransactions = ledger.transactions,
                     balanceTrails = ledger.balanceTrails
                 )
             }
+                .conflate()
+                .flowOn(Dispatchers.Default)
         }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AccountsUiState())
 
@@ -254,20 +262,12 @@ class AccountsViewModel @Inject constructor(
         setSelectedMonth(y, m)
     }
 
-    fun restoreAccount(accountId: Long) {
-        viewModelScope.launch { accountRepository.restoreAccount(accountId) }
+    fun archiveAccounts(accountIds: List<Long>) {
+        viewModelScope.launch { accountRepository.archiveAccounts(accountIds) }
     }
 
-    fun deleteArchivedAccountSms(smsRecordId: Long) {
-        viewModelScope.launch { accountRepository.deleteArchivedAccountSms(smsRecordId) }
-    }
-
-    fun deleteAllArchivedAccountSms(smsRecordIds: List<Long>) {
-        viewModelScope.launch { accountRepository.deleteArchivedAccountSmsBatch(smsRecordIds) }
-    }
-
-    fun deleteAccountPermanently(accountId: Long) {
-        viewModelScope.launch { accountRepository.deleteAccountPermanently(accountId) }
+    fun deleteAccountsPermanentlyWithSms(accountIds: List<Long>) {
+        viewModelScope.launch { accountRepository.deleteAccountsPermanentlyWithSms(accountIds) }
     }
 
     fun ensureCashAccount() {
