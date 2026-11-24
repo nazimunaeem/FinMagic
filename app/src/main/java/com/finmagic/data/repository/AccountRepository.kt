@@ -927,6 +927,18 @@ class AccountRepository @Inject constructor(
     /** Soft-deleted (archived) accounts that can still be restored by the user. */
     fun observeArchived(): Flow<List<Account>> = accountDao.observeArchived()
 
+    fun observeSmsCount(): Flow<Int> = smsRecordDao.getSmsCount()
+
+    /** Matches stored SMS for a given list of archived accounts in a single pass. */
+    suspend fun matchArchivedAccountSmsOnce(accounts: List<Account>): Map<Long, List<com.finmagic.data.local.entity.SmsRecord>> {
+        if (accounts.isEmpty()) return emptyMap()
+        val allSms = smsRecordDao.getAllOnce()
+        val linkedByAccount = accounts.associate { acct ->
+            acct.id to smsRuleApplicationDao.getSmsRecordIdsForAccount(acct.id).toSet()
+        }
+        return ArchivedAccountSmsMatcher.matchingSmsByAccount(accounts, allSms, linkedByAccount)
+    }
+
     /** Archived accounts paired with their stored SMS messages so users can delete SMS and then permanently remove the account. */
     fun observeArchivedWithSms(): Flow<List<ArchivedAccountWithSms>> =
         kotlinx.coroutines.flow.combine(
@@ -934,13 +946,23 @@ class AccountRepository @Inject constructor(
             smsRecordDao.getAllSms(),
             smsRuleApplicationDao.observeAccountLinkedSmsIds()
         ) { archivedAccounts, allSms, linkedRows ->
-            val linkedByAccount = linkedRows.groupBy({ it.accountId }, { it.smsRecordId })
-            archivedAccounts.map { account ->
-                val linkedIds = linkedByAccount[account.id]?.toSet().orEmpty()
-                ArchivedAccountWithSms(
-                    account = account,
-                    matchingSms = ArchivedAccountSmsMatcher.matchingSms(account, allSms, linkedIds)
+            if (archivedAccounts.isEmpty()) {
+                emptyList()
+            } else {
+                val linkedByAccount = linkedRows
+                    .groupBy({ it.accountId }, { it.smsRecordId })
+                    .mapValues { (_, ids) -> ids.toSet() }
+                val matched = ArchivedAccountSmsMatcher.matchingSmsByAccount(
+                    accounts = archivedAccounts,
+                    allSms = allSms,
+                    linkedSmsByAccount = linkedByAccount
                 )
+                archivedAccounts.map { account ->
+                    ArchivedAccountWithSms(
+                        account = account,
+                        matchingSms = matched[account.id].orEmpty()
+                    )
+                }
             }
         }
 

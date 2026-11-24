@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,7 +60,8 @@ fun ArchivedAccountsScreen(
     onBack: () -> Unit,
     viewModel: ArchivedAccountsViewModel = hiltViewModel()
 ) {
-    val archivedItems by viewModel.archivedAccountsWithSms.collectAsStateWithLifecycle()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val archivedItems = uiState.items
     var managingArchivedSmsAccountId by remember { mutableStateOf<Long?>(null) }
     var confirmPermanentDeleteAccount by remember { mutableStateOf<Account?>(null) }
     var selectedAccountIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
@@ -162,7 +164,16 @@ fun ArchivedAccountsScreen(
             }
         }
     ) { padding ->
-        if (archivedItems.isEmpty()) {
+        if (uiState.isLoading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+        } else if (archivedItems.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -235,6 +246,7 @@ fun ArchivedAccountsScreen(
                         onRestore = { viewModel.restoreAccount(acctId) },
                         onManageSms = { managingArchivedSmsAccountId = acctId },
                         onDeletePermanently = { confirmPermanentDeleteAccount = item.account },
+                        isSmsLoading = uiState.isMatchingSms,
                         selectionMode = isSelectionMode,
                         isSelected = isSelected,
                         onToggleSelect = {

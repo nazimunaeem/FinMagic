@@ -143,8 +143,7 @@ fun CreditCardsScreen(
                 onSelect = { tab ->
                     selectedTab = tab
                     onTabSelected(tab)
-                },
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 1.dp)
+                }
             )
 
             PullToRefreshBox(
@@ -159,8 +158,8 @@ fun CreditCardsScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 LazyColumn(
-                    contentPadding = PaddingValues(top = 2.dp, bottom = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     if (selectedTab == 0) {
@@ -357,39 +356,62 @@ fun CreditCardsScreen(
                         // MY CARDS TAB
                         if (state.cards.isEmpty()) {
                             item {
-                                Box(
+                                Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 48.dp),
-                                    contentAlignment = Alignment.Center
+                                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                                    shape = RoundedCornerShape(24.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                                    ),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                                 ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Icon(
-                                            Icons.Default.CreditCard,
-                                            contentDescription = null,
-                                            modifier = Modifier.padding(16.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 24.dp, vertical = 32.dp)
+                                    ) {
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = MaterialTheme.colorScheme.primaryContainer,
+                                            modifier = Modifier.size(56.dp)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(
+                                                    Icons.Default.CreditCard,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    modifier = Modifier.size(28.dp)
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(14.dp))
                                         Text(
                                             text = "No cards yet",
-                                            style = MaterialTheme.typography.headlineSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            style = MaterialTheme.typography.titleLarge,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurface
                                         )
-                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Spacer(modifier = Modifier.height(6.dp))
                                         Text(
-                                            text = "Cards are added automatically when SMS bills are detected.\nYou can also add one manually.",
+                                            text = "Cards are added automatically from bank SMS bills, or you can add one manually.",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             textAlign = TextAlign.Center
                                         )
-                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Spacer(modifier = Modifier.height(18.dp))
                                         Button(
                                             onClick = { showAddCardDialog = true },
-                                            shape = RoundedCornerShape(12.dp)
+                                            shape = RoundedCornerShape(14.dp),
+                                            modifier = Modifier
+                                                .defaultMinSize(minHeight = 44.dp)
+                                                .testTag("add_card_button")
                                         ) {
                                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                                             Spacer(modifier = Modifier.width(6.dp))
-                                            Text("Add Card Manually")
+                                            Text("Add Card")
                                         }
                                     }
                                 }
@@ -399,48 +421,41 @@ fun CreditCardsScreen(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 0.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                        .padding(horizontal = 14.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Text(
-                                        text = "Your Cards",
-                                        style = MaterialTheme.typography.titleLarge,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    TextButton(
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Your Cards",
+                                            style = MaterialTheme.typography.titleLarge,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "${state.cards.size} active ${if (state.cards.size == 1) "card" else "cards"}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    FilledTonalButton(
                                         onClick = { showAddCardDialog = true },
-                                        modifier = Modifier.testTag("add_card_button")
+                                        shape = RoundedCornerShape(14.dp),
+                                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                                        modifier = Modifier
+                                            .defaultMinSize(minHeight = 40.dp)
+                                            .testTag("add_card_button")
                                     ) {
                                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Add", style = MaterialTheme.typography.labelLarge)
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Add Card", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                                     }
                                 }
-                            }
-
-                            item {
-                                CardPeriodSelector(
-                                    mode = state.periodMode,
-                                    selectedYear = state.selectedYear,
-                                    selectedMonth = state.selectedMonth,
-                                    canStepNext = state.canStepNext,
-                                    onModeSelected = { viewModel.setPeriodMode(it) },
-                                    onPrevious = { viewModel.stepPreviousPeriod() },
-                                    onNext = { viewModel.stepNextPeriod() },
-                                    modifier = Modifier.padding(horizontal = 12.dp)
-                                )
                             }
 
                             items(state.cards, key = { it.card.id }) { cardWithStats ->
                                 Box(modifier = Modifier.padding(horizontal = 12.dp)) {
                                     CardItem(
                                         stats = cardWithStats,
-                                        periodLabel = formatCardPeriodLabel(
-                                            state.periodMode,
-                                            state.selectedYear,
-                                            state.selectedMonth
-                                        ),
                                         onClick = { onCardClick(cardWithStats.card.id) },
                                         onEditClick = { editingCardStats = cardWithStats },
                                         onPayBill = cardWithStats.nextUnpaidBill?.let { bill ->
@@ -449,7 +464,6 @@ fun CreditCardsScreen(
                                     )
                                 }
                             }
-
                         }
                     }
                 }
@@ -559,36 +573,39 @@ fun PaymentReceivedRow(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = StatusSafe.copy(alpha = 0.08f)
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         ),
+        border = BorderStroke(1.dp, StatusSafe.copy(alpha = 0.3f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(StatusSafe.copy(alpha = 0.15f)),
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(StatusSafe.copy(alpha = 0.14f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.CheckCircle,
                     contentDescription = null,
                     tint = StatusSafe,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(19.dp)
                 )
             }
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Payment Received •••${payment.cardTail}",
+                    text = "Payment Received · •••${payment.cardTail}",
                     style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(payment.paidAt),
@@ -596,8 +613,9 @@ fun PaymentReceivedRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Tk ${String.format(Locale.US, "%,.0f", payment.amountBdt)}",
+                text = "৳${String.format(Locale.US, "%,.0f", payment.amountBdt)}",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = StatusSafe
@@ -636,37 +654,34 @@ internal fun CardPeriodSelector(
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(3.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            FilterChip(
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            SegmentedButton(
                 selected = mode == CardPeriodMode.ALL,
                 onClick = { onModeSelected(CardPeriodMode.ALL) },
-                label = { Text("All") },
+                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3),
                 modifier = Modifier.testTag("cards_period_all")
-            )
-            FilterChip(
+            ) { Text("All") }
+            SegmentedButton(
                 selected = mode == CardPeriodMode.MONTH,
                 onClick = { onModeSelected(CardPeriodMode.MONTH) },
-                label = { Text("Month") },
+                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3),
                 modifier = Modifier.testTag("cards_period_month")
-            )
-            FilterChip(
+            ) { Text("Month") }
+            SegmentedButton(
                 selected = mode == CardPeriodMode.YEAR,
                 onClick = { onModeSelected(CardPeriodMode.YEAR) },
-                label = { Text("Year") },
+                shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3),
                 modifier = Modifier.testTag("cards_period_year")
-            )
+            ) { Text("Year") }
         }
 
         if (mode != CardPeriodMode.ALL) {
             Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -689,7 +704,7 @@ internal fun CardPeriodSelector(
                     }
                     Text(
                         text = formatCardPeriodLabel(mode, selectedYear, selectedMonth),
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )
                     IconButton(
@@ -744,7 +759,6 @@ private fun bankBrandGradient(bankName: String?): Brush {
 @Composable
 private fun CardItem(
     stats: CardWithStats,
-    periodLabel: String,
     onClick: () -> Unit,
     onEditClick: () -> Unit,
     onPayBill: (() -> Unit)? = null
@@ -759,13 +773,18 @@ private fun CardItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(14.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -773,15 +792,15 @@ private fun CardItem(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(38.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(12.dp))
                         .background(bankBrandGradient(card.bankName)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         Icons.Default.CreditCard,
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(20.dp),
                         tint = Color.White
                     )
                 }
@@ -789,30 +808,39 @@ private fun CardItem(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = card.displayName,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = card.maskedCard,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.75f)
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (stats.unpaidBillCount > 0) {
+                        MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
+                    } else {
+                        StatusSafe.copy(alpha = 0.12f)
+                    }
                 ) {
                     Text(
-                        text = "${stats.transactionCount} txns",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        text = if (stats.unpaidBillCount > 0) {
+                            "${stats.unpaidBillCount} unpaid"
+                        } else {
+                            "All clear"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (stats.unpaidBillCount > 0) MaterialTheme.colorScheme.error else StatusSafe,
                         modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
                     )
                 }
+
                 IconButton(
                     onClick = onEditClick,
                     modifier = Modifier
@@ -828,84 +856,128 @@ private fun CardItem(
                 }
             }
 
-            if (utilization != null) {
-                Spacer(modifier = Modifier.height(5.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer
+            ) {
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Outstanding",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "${card.limitSymbol()}${String.format(Locale.US, "%,.2f", outstanding)}",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = if (outstanding > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (stats.unpaidByCurrency.isNotEmpty()) {
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = "Bill Due",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = formatCurrencyMap(stats.unpaidByCurrency),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.error,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "Paid So Far",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = formatCurrencyMap(stats.paidSoFarByCurrency),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = StatusSafe,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (utilization != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Limit ${card.limitSymbol()}${String.format(Locale.US, "%,.0f", card.creditLimit)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${(utilization * 100).toInt()}% used",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (utilization > 0.8) StatusOverdue else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     LinearProgressIndicator(
                         progress = { utilization.toFloat() },
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .height(6.dp)
                             .clip(RoundedCornerShape(3.dp)),
                         color = if (utilization > 0.8) StatusOverdue else MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "${card.limitSymbol()}${String.format(Locale.US, "%,.0f", card.creditLimit)} • ${(utilization * 100).toInt()}%",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(5.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
+            if (onPayBill != null || stats.transactionCount > 0) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Outstanding ${card.limitSymbol()}${String.format(Locale.US, "%,.2f", outstanding)} • Spent ৳${String.format(Locale.US, "%,.2f", stats.spentAmount)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (outstanding > 0) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    val billSummary = if (stats.unpaidByCurrency.isNotEmpty()) {
-                        "Bill due ${formatCurrencyMap(stats.unpaidByCurrency)}"
-                    } else {
-                        "Billed ${formatCurrencyMap(stats.billedByCurrency)}"
-                    }
-                    Text(
-                        text = "$billSummary • Paid ${formatCurrencyMap(stats.paidByCurrency)} ($periodLabel)",
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "${stats.transactionCount} ${if (stats.transactionCount == 1) "transaction" else "transactions"}",
+                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = if (stats.unpaidBillCount > 0) {
-                            "${stats.unpaidBillCount} unpaid bill${if (stats.unpaidBillCount == 1) "" else "s"}"
-                        } else {
-                            "All bills paid"
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (stats.unpaidBillCount > 0) MaterialTheme.colorScheme.error else StatusSafe
-                    )
                     if (onPayBill != null) {
-                        Spacer(modifier = Modifier.height(4.dp))
                         Button(
                             onClick = onPayBill,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.error,
-                                contentColor = Color.White
+                                contentColor = MaterialTheme.colorScheme.onError
                             ),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
-                                .defaultMinSize(minHeight = 38.dp)
+                                .defaultMinSize(minHeight = 40.dp)
                                 .testTag("card_pay_bill_${card.id}")
                         ) {
                             Icon(
@@ -913,7 +985,7 @@ private fun CardItem(
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp)
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text("Pay Bill", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                         }
                     }
@@ -923,6 +995,7 @@ private fun CardItem(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CardsTabBar(
     selectedTab: Int,
@@ -932,46 +1005,38 @@ private fun CardsTabBar(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(
+    SecondaryTabRow(
+        selectedTabIndex = selectedTab,
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(2.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            CardsTabPill(
-                title = "Bills",
-                icon = Icons.Default.ReceiptLong,
-                badge = if (unpaidBillCount > 0) unpaidBillCount.toString() else null,
-                badgeDanger = overdueCount > 0 || unpaidBillCount > 0,
-                selected = selectedTab == 0,
-                onClick = { onSelect(0) },
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("cards_tab_bills")
-            )
-            CardsTabPill(
-                title = "My Cards",
-                icon = Icons.Default.CreditCard,
-                badge = if (cardCount > 0) cardCount.toString() else null,
-                badgeDanger = false,
-                selected = selectedTab == 1,
-                onClick = { onSelect(1) },
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("cards_tab_my_cards")
-            )
+        containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.primary,
+        divider = {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         }
+    ) {
+        CardsTabItem(
+            title = "Bills",
+            icon = Icons.Default.ReceiptLong,
+            badge = if (unpaidBillCount > 0) unpaidBillCount.toString() else null,
+            badgeDanger = overdueCount > 0 || unpaidBillCount > 0,
+            selected = selectedTab == 0,
+            onClick = { onSelect(0) },
+            modifier = Modifier.testTag("cards_tab_bills")
+        )
+        CardsTabItem(
+            title = "My Cards",
+            icon = Icons.Default.CreditCard,
+            badge = if (cardCount > 0) cardCount.toString() else null,
+            badgeDanger = false,
+            selected = selectedTab == 1,
+            onClick = { onSelect(1) },
+            modifier = Modifier.testTag("cards_tab_my_cards")
+        )
     }
 }
 
 @Composable
-private fun CardsTabPill(
+private fun CardsTabItem(
     title: String,
     icon: ImageVector,
     badge: String?,
@@ -980,22 +1045,19 @@ private fun CardsTabPill(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val containerColor = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
-    val contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    val contentColor = if (selected) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
 
-    Surface(
-        modifier = modifier
-            .height(34.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(10.dp),
-        color = containerColor,
-        tonalElevation = if (selected) 2.dp else 0.dp
+    Tab(
+        selected = selected,
+        onClick = onClick,
+        modifier = modifier.defaultMinSize(minHeight = 48.dp)
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 12.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -1015,28 +1077,22 @@ private fun CardsTabPill(
             )
             if (badge != null) {
                 Spacer(modifier = Modifier.width(6.dp))
-                val badgeBg = when {
-                    badgeDanger -> MaterialTheme.colorScheme.error
-                    selected -> MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.22f)
-                    else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                }
-                val badgeFg = when {
-                    badgeDanger -> Color.White
-                    selected -> MaterialTheme.colorScheme.onPrimary
-                    else -> MaterialTheme.colorScheme.primary
-                }
-                Box(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(badgeBg)
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                    contentAlignment = Alignment.Center
+                Badge(
+                    containerColor = when {
+                        badgeDanger -> MaterialTheme.colorScheme.error
+                        selected -> MaterialTheme.colorScheme.primaryContainer
+                        else -> MaterialTheme.colorScheme.surfaceContainerHigh
+                    },
+                    contentColor = when {
+                        badgeDanger -> MaterialTheme.colorScheme.onError
+                        selected -> MaterialTheme.colorScheme.onPrimaryContainer
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
                 ) {
                     Text(
                         text = badge,
                         style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = badgeFg
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
@@ -1054,11 +1110,14 @@ private fun TrendChart(
 
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

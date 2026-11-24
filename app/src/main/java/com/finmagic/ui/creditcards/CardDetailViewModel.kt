@@ -79,17 +79,28 @@ class CardDetailViewModel @Inject constructor(
     val bills: StateFlow<List<BillWithCard>> = _bills
 
     val totalPaid: StateFlow<Double> = _bills
-        .map { list -> list.filter { !it.isSuperseded }.sumOf { it.paidAmount } }
+        .map { list ->
+            list.filter { it.isPaid }
+                .sumOf { if (it.paidAmount > 0.0) it.paidAmount else it.totalDue }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    val paidSoFarTotals: StateFlow<Map<String, Double>> = _bills
+        .map { list ->
+            list.filter { it.isPaid }
+                .groupingBy { it.currency }
+                .fold(0.0) { acc, b -> acc + (if (b.paidAmount > 0.0) b.paidAmount else b.totalDue) }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     val totalUnpaid: StateFlow<Double> = _bills
         .map { list -> list.filter { !it.isPaid && !it.isSuperseded }.sumOf { it.totalDue - it.paidAmount } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     val paidTotals: StateFlow<Map<String, Double>> = combine(_bills, _periodMode, _selectedPeriod) { list, mode, (y, m) ->
-        list.filter { !it.isSuperseded && it.paidAmount > 0.0 && billMatchesPeriod(it, mode, y, m) }
+        list.filter { it.isPaid && billMatchesPeriod(it, mode, y, m) }
             .groupingBy { it.currency }
-            .fold(0.0) { acc, b -> acc + b.paidAmount }
+            .fold(0.0) { acc, b -> acc + (if (b.paidAmount > 0.0) b.paidAmount else b.totalDue) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     val billedTotals: StateFlow<Map<String, Double>> = combine(_bills, _periodMode, _selectedPeriod) { list, mode, (y, m) ->

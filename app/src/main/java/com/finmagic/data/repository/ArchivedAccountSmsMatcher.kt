@@ -24,8 +24,46 @@ object ArchivedAccountSmsMatcher {
         allSms: List<SmsRecord>,
         linkedSmsIds: Set<Long> = emptySet()
     ): List<SmsRecord> {
-        if (account.kind == Account.KIND_CASH) return emptyList()
+        if (account.kind == Account.KIND_CASH || allSms.isEmpty()) return emptyList()
         return allSms.filter { record -> matches(account, record, linkedSmsIds) }
+    }
+
+    /**
+     * Single-pass batch matcher: classifies each [SmsRecord] at most once across all
+     * archived [accounts], instead of re-classifying N * M times.
+     */
+    fun matchingSmsByAccount(
+        accounts: List<Account>,
+        allSms: List<SmsRecord>,
+        linkedSmsByAccount: Map<Long, Set<Long>> = emptyMap()
+    ): Map<Long, List<SmsRecord>> {
+        val nonCashAccounts = accounts.filter { it.kind != Account.KIND_CASH }
+        if (nonCashAccounts.isEmpty()) return emptyMap()
+        if (allSms.isEmpty()) return nonCashAccounts.associate { it.id to emptyList() }
+
+        val buckets = LinkedHashMap<Long, MutableList<SmsRecord>>(nonCashAccounts.size).apply {
+            nonCashAccounts.forEach { put(it.id, mutableListOf()) }
+        }
+
+        for (record in allSms) {
+            var classified: SmsClassification? = null
+            for (account in nonCashAccounts) {
+                val linkedIds = linkedSmsByAccount[account.id].orEmpty()
+                if (record.id > 0L && record.id in linkedIds) {
+                    buckets[account.id]?.add(record)
+                    continue
+                }
+                if (classified == null) {
+                    classified = runCatching {
+                        SmsClassifier.classify(record.address, record.body, record.timestamp)
+                    }.getOrElse { SmsClassification.Unparsed }
+                }
+                if (matchesClassification(account, record, classified)) {
+                    buckets[account.id]?.add(record)
+                }
+            }
+        }
+        return buckets
     }
 
     fun matches(
@@ -36,7 +74,18 @@ object ArchivedAccountSmsMatcher {
         if (account.kind == Account.KIND_CASH) return false
         if (record.id > 0L && record.id in linkedSmsIds) return true
 
-        return when (val result = SmsClassifier.classify(record.address, record.body, record.timestamp)) {
+        val result = runCatching {
+            SmsClassifier.classify(record.address, record.body, record.timestamp)
+        }.getOrElse { SmsClassification.Unparsed }
+        return matchesClassification(account, record, result)
+    }
+
+    private fun matchesClassification(
+        account: Account,
+        record: SmsRecord,
+        result: SmsClassification
+    ): Boolean {
+        return when (result) {
             is SmsClassification.AcctTxn -> entryMatchesAccount(result.entry, account)
             is SmsClassification.AtmWithdraw -> entryMatchesAccount(result.entry, account)
             is SmsClassification.WalletTxn -> entryMatchesAccount(result.entry, account)

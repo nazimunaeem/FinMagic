@@ -170,6 +170,7 @@ data class CardWithStats(
     val outstandingAmount: Double = 0.0,
     val billedByCurrency: Map<String, Double> = emptyMap(),
     val paidByCurrency: Map<String, Double> = emptyMap(),
+    val paidSoFarByCurrency: Map<String, Double> = emptyMap(),
     val unpaidByCurrency: Map<String, Double> = emptyMap(),
     val spentAmount: Double = 0.0,
     val transactionCount: Int = 0,
@@ -415,6 +416,13 @@ class CreditCardsViewModel @Inject constructor(
                             allPayments = allPayments
                         )
 
+                        val paidBillsForCard = cardBills.filter { it.isPaid }
+                        val paidSoFarByCurrency = paidBillsForCard
+                            .groupingBy { it.currency }
+                            .fold(0.0) { acc, b ->
+                                acc + (if (b.paidAmount > 0.0) b.paidAmount else b.totalDue)
+                            }
+
                         CardWithStats(
                             card = card,
                             outstandingAmount = outstanding,
@@ -422,9 +430,12 @@ class CreditCardsViewModel @Inject constructor(
                                 .groupingBy { it.currency }
                                 .fold(0.0) { acc, b -> acc + b.totalDue },
                             paidByCurrency = periodBills
-                                .filter { it.paidAmount > 0.0 }
+                                .filter { it.isPaid }
                                 .groupingBy { it.currency }
-                                .fold(0.0) { acc, b -> acc + b.paidAmount },
+                                .fold(0.0) { acc, b ->
+                                    acc + (if (b.paidAmount > 0.0) b.paidAmount else b.totalDue)
+                                },
+                            paidSoFarByCurrency = paidSoFarByCurrency,
                             unpaidByCurrency = unpaid
                                 .groupingBy { it.currency }
                                 .fold(0.0) { acc, b -> acc + (b.totalDue - b.paidAmount) },
@@ -432,7 +443,9 @@ class CreditCardsViewModel @Inject constructor(
                             transactionCount = matchingTxns.size,
                             unpaidBillCount = unpaid.size,
                             overdueBillCount = unpaid.count { it.dueStatus == DueStatus.OVERDUE },
-                            totalPaid = periodBills.sumOf { it.paidAmount },
+                            totalPaid = paidBillsForCard.sumOf {
+                                if (it.paidAmount > 0.0) it.paidAmount else it.totalDue
+                            },
                             totalUnpaid = unpaid.sumOf { it.totalDue - it.paidAmount },
                             nextUnpaidBill = sortBills(unpaid).firstOrNull()
                         )

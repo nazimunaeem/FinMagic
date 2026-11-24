@@ -190,10 +190,36 @@ class CardRepository @Inject constructor(
                 val spendSinceAnchor = cardTxns
                     .filter { it.occurredAt > card.outstandingAnchorAt }
                     .sumOf { it.amount }
-                val paidSinceAnchor = cardPayments
+                val smsPaidSinceAnchor = cardPayments
                     .filter { it.paidAt > card.outstandingAnchorAt }
                     .sumOf { it.amountBdt }
-                return max(0.0, anchor + spendSinceAnchor - paidSinceAnchor)
+                val limitCurrency = card.creditLimitCurrency.ifBlank { "BDT" }
+                val manualBillPaidSinceAnchor = cardBills
+                    .filter { bill ->
+                        !bill.paidViaSms &&
+                            bill.paidAt != null &&
+                            bill.paidAt > card.outstandingAnchorAt &&
+                            bill.paidAt <= asOfMillis &&
+                            bill.paidAmount > 0.0 &&
+                            (bill.currency.equals(limitCurrency, ignoreCase = true) ||
+                                bill.currency.equals("BDT", ignoreCase = true))
+                    }
+                    .groupBy { it.paidAt!! }
+                    .entries
+                    .sumOf { (paidAt, billsAtTimestamp) ->
+                        // Credit carryover sets the same paidAt on newer bills; earliest-detected
+                        // bill holds the primary payment amount. Also avoid double-counting if
+                        // a CardPayment row was inserted at the same time (e.g. taught SMS).
+                        val primaryAmount = billsAtTimestamp
+                            .minByOrNull { it.detectedAt }
+                            ?.paidAmount ?: 0.0
+                        val alreadyInCardPayments = cardPayments.any { p ->
+                            kotlin.math.abs(p.paidAt - paidAt) <= 60_000L &&
+                                kotlin.math.abs(p.amountBdt - primaryAmount) <= 1.0
+                        }
+                        if (alreadyInCardPayments) 0.0 else primaryAmount
+                    }
+                return max(0.0, anchor + spendSinceAnchor - smsPaidSinceAnchor - manualBillPaidSinceAnchor)
             }
 
             val todayStart = Calendar.getInstance().apply {

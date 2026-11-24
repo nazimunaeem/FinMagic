@@ -5,6 +5,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -100,14 +102,36 @@ fun BillCard(
     val remainingAmount = maxOf(0.0, bill.totalDue - bill.paidAmount)
     val isOutstanding = !bill.isPaid && remainingAmount > 0.0
     val dangerColor = MaterialTheme.colorScheme.error
+    val currencySymbol = when (bill.currency.uppercase()) {
+        "USD" -> "$"
+        else -> "৳"
+    }
+    val remainingMin = maxOf(0.0, bill.minDue - bill.paidAmount)
+    val formattedMin = if (!bill.isPaid && remainingMin > 0) {
+        "$currencySymbol${String.format(java.util.Locale.US, "%,.2f", remainingMin)}"
+    } else {
+        "Cleared"
+    }
+
+    val cardBorder = if (!bill.isPaid && bill.dueStatus == DueStatus.OVERDUE) {
+        BorderStroke(1.dp, StatusOverdue.copy(alpha = 0.45f))
+    } else {
+        BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+    }
 
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        border = cardBorder,
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -118,39 +142,44 @@ fun BillCard(
                     modifier = if (onCardClick != null) {
                         Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .clickable { onCardClick() }
+                            .padding(end = 8.dp)
                     } else {
-                        Modifier.weight(1f)
+                        Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp)
                     }
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
-                            .clip(CircleShape)
-                            .background(statusColor.copy(alpha = 0.15f)),
+                            .size(38.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(statusColor.copy(alpha = 0.14f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.CreditCard,
                             contentDescription = null,
                             tint = statusColor,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(19.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
                             text = bill.displayName,
-                            style = MaterialTheme.typography.titleSmall,
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = if (bill.paidViaSms) "Bill: ${bill.billPeriod} • SMS ✓" else "Bill: ${bill.billPeriod}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = if (bill.paidViaSms) "${bill.billPeriod} · SMS verified" else bill.billPeriod,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -158,72 +187,76 @@ fun BillCard(
                 StatusChip(status = bill.dueStatus, statusColor = statusColor, bgColor = bgColor)
             }
 
-            Spacer(modifier = Modifier.height(3.dp))
-
-            Row(
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Bill Amount",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = bill.formattedTotal,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-
-                Column(
-                    modifier = Modifier.weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Outstanding",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = if (bill.isPaid) "৳0.00" else bill.formattedRemaining,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isOutstanding) dangerColor else StatusSafe
-                    )
-                }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Bill Amount",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = bill.formattedTotal,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
 
-                Column(
-                    modifier = Modifier.weight(0.85f),
-                    horizontalAlignment = Alignment.End
-                ) {
-                    Text(
-                        text = "Min Due",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    val remainingMin = maxOf(0.0, bill.minDue - bill.paidAmount)
-                    val formattedMin = if (!bill.isPaid && remainingMin > 0) {
-                        val symbol = when (bill.currency.uppercase()) {
-                            "USD" -> "$"
-                            else -> "৳"
-                        }
-                        "$symbol${String.format(java.util.Locale.US, "%,.2f", remainingMin)}"
-                    } else "Cleared"
+                    Column(
+                        modifier = Modifier.weight(1.1f),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Outstanding",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (bill.isPaid) "৳0.00" else bill.formattedRemaining,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isOutstanding) dangerColor else StatusSafe,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
 
-                    Text(
-                        text = formattedMin,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (!bill.isPaid && remainingMin > 0) statusColor else StatusSafe
-                    )
+                    Column(
+                        modifier = Modifier.weight(0.9f),
+                        horizontalAlignment = Alignment.End
+                    ) {
+                        Text(
+                            text = "Min Due",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = formattedMin,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (!bill.isPaid && remainingMin > 0) statusColor else StatusSafe,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
-
-            Spacer(modifier = Modifier.height(3.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -232,114 +265,106 @@ fun BillCard(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Due: ",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = bill.formattedDueDate,
+                        text = "Due ${bill.formattedDueDate}",
                         style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     if (!bill.isPaid && bill.daysUntilDue >= 0) {
                         Text(
-                            text = " (${bill.daysUntilDue}d left)",
-                            style = MaterialTheme.typography.labelSmall,
+                            text = " · ${bill.daysUntilDue}d left",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
                             color = statusColor
                         )
                     }
                 }
 
                 if (bill.paidAmount > 0) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Paid: ",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        val symbol = when (bill.currency.uppercase()) {
-                            "USD" -> "$"
-                            else -> "৳"
-                        }
-                        Text(
-                            text = "$symbol${String.format(java.util.Locale.US, "%,.2f", bill.paidAmount)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = StatusSafe
-                        )
-                    }
+                    Text(
+                        text = "Paid $currencySymbol${String.format(java.util.Locale.US, "%,.2f", bill.paidAmount)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = StatusSafe
+                    )
                 }
             }
 
             if (!bill.isPaid && bill.dueStatus == DueStatus.OVERDUE) {
-                Spacer(modifier = Modifier.height(4.dp))
-                val symbol = when (bill.currency.uppercase()) {
-                    "USD" -> "$"
-                    else -> "৳"
-                }
                 val monthlyFee = bill.totalDue * 0.025
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Warning,
-                        contentDescription = null,
-                        tint = StatusOverdue,
-                        modifier = Modifier.size(13.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "≈ $symbol${String.format(java.util.Locale.US, "%,.0f", monthlyFee)}/month late fee estimate",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = StatusOverdue
-                    )
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = StatusOverdue.copy(alpha = 0.1f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = StatusOverdue,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "≈ $currencySymbol${String.format(java.util.Locale.US, "%,.0f", monthlyFee)}/month late fee estimate",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Medium,
+                            color = StatusOverdue
+                        )
+                    }
                 }
             }
-
-            Spacer(modifier = Modifier.height(2.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     if (!bill.isPaid) {
                         Button(
                             onClick = { showPaySheet = true },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = dangerColor,
-                                contentColor = Color.White
+                                contentColor = MaterialTheme.colorScheme.onError
                             ),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                             modifier = Modifier
-                                .height(34.dp)
+                                .defaultMinSize(minHeight = 40.dp)
                                 .testTag("bill_pay_button_${bill.billId}")
                         ) {
-                            Icon(Icons.Default.Payments, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Pay Bill", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Icon(Icons.Default.Payments, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Pay Bill", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                         }
-                        Spacer(modifier = Modifier.width(6.dp))
-                        TextButton(
+                        FilledTonalButton(
                             onClick = { showPaymentDialog = true },
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                            modifier = Modifier.height(34.dp)
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.defaultMinSize(minHeight = 40.dp)
                         ) {
-                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(15.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Partial", style = MaterialTheme.typography.labelSmall)
+                            Text("Partial", style = MaterialTheme.typography.labelLarge)
                         }
                     }
 
                     IconButton(
                         onClick = { showEditDialog = true },
-                        modifier = Modifier.size(34.dp)
+                        modifier = Modifier.size(44.dp)
                     ) {
                         Icon(
                             Icons.Default.Create,
                             contentDescription = "Edit bill",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
@@ -348,14 +373,14 @@ fun BillCard(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = "Mark Paid",
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Switch(
                             checked = false,
                             onCheckedChange = { onMarkPaid() },
-                            modifier = Modifier.scale(0.7f),
+                            modifier = Modifier.scale(0.8f),
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = StatusSafe,
                                 checkedTrackColor = StatusSafe.copy(alpha = 0.3f)
@@ -555,22 +580,22 @@ fun StatusChip(
     val text = when (status) {
         DueStatus.PAID -> "Paid"
         DueStatus.OVERDUE -> "Overdue"
-        DueStatus.DUE_SOON -> "Soon"
+        DueStatus.DUE_SOON -> "Due Soon"
         DueStatus.UPCOMING -> "Upcoming"
-        DueStatus.SAFE -> "Safe"
+        DueStatus.SAFE -> "Active"
     }
 
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(bgColor)
-            .padding(horizontal = 10.dp, vertical = 4.dp)
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = bgColor,
+        border = BorderStroke(1.dp, statusColor.copy(alpha = 0.25f))
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelSmall,
             color = statusColor,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
         )
     }
 }
@@ -674,7 +699,7 @@ fun SectionHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 1.dp),
+            .padding(horizontal = 14.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -686,16 +711,23 @@ fun SectionHeader(
         Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
             color = color
         )
         Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = "($count)",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh
+        ) {
+            Text(
+                text = count.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+            )
+        }
     }
 }
 

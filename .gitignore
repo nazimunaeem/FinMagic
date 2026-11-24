@@ -29,6 +29,7 @@ analysis/
 *.jks
 *.keystore
 *.p12
+!debug.keystore.base64
 
 # Generated / device artifacts
 .DS_Store

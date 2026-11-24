@@ -70,6 +70,7 @@ internal fun ArchivedAccountRow(
     onManageSms: () -> Unit,
     onDeletePermanently: () -> Unit,
     modifier: Modifier = Modifier,
+    isSmsLoading: Boolean = false,
     selectionMode: Boolean = false,
     isSelected: Boolean = false,
     onToggleSelect: (() -> Unit)? = null,
@@ -77,7 +78,7 @@ internal fun ArchivedAccountRow(
 ) {
     val account = item.account
     val smsCount = item.matchingSms.size
-    val canDeletePermanently = smsCount == 0
+    val canDeletePermanently = !isSmsLoading && smsCount == 0
     val haptic = LocalHapticFeedback.current
 
     val subtitleParts = buildList {
@@ -87,8 +88,11 @@ internal fun ArchivedAccountRow(
             add("•• ${account.accountMask}")
         }
         add(
-            if (smsCount == 0) "No SMS stored"
-            else "$smsCount stored SMS"
+            when {
+                isSmsLoading && smsCount == 0 -> "Checking stored SMS..."
+                smsCount == 0 -> "No SMS stored"
+                else -> "$smsCount stored SMS"
+            }
         )
     }
 
@@ -224,6 +228,17 @@ internal fun ArchivedAccountRow(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("Delete")
+                    }
+                } else if (isSmsLoading) {
+                    OutlinedButton(
+                        onClick = {},
+                        enabled = false,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .minimumInteractiveComponentSize()
+                            .testTag("archived_checking_sms_button_${account.id}")
+                    ) {
+                        Text("Checking stored SMS...")
                     }
                 } else {
                     Button(

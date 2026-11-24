@@ -142,4 +142,55 @@ class CardOutstandingTest {
         )
         assertEquals(50_500.0, cleared, 0.01)
     }
+
+    @Test
+    fun manualBillPaymentDeductsFromOutstandingAnchorWithoutDoubleCounting() {
+        val stmtTime = ts(2026, Calendar.MARCH, 5)
+        val anchorTime = ts(2026, Calendar.MARCH, 10)
+        val manualPayTime = ts(2026, Calendar.MARCH, 15)
+        val smsPayTime = ts(2026, Calendar.MARCH, 18)
+
+        // Outstanding set manually to 40,000 even though active bill is 15,000
+        val c = card(anchor = 40_000.0, anchorAt = anchorTime)
+
+        // Bill 1 (15,000) manually marked paid after anchorTime; newer bill (20,000) got carryover at same timestamp
+        val bills = listOf(
+            bill(
+                id = 10L,
+                totalDue = 15_000.0,
+                paidAmount = 15_000.0,
+                isPaid = true,
+                paidViaSms = false,
+                detectedAt = stmtTime,
+                paidAt = manualPayTime
+            ),
+            bill(
+                id = 11L,
+                totalDue = 20_000.0,
+                paidAmount = 15_000.0,
+                isPaid = false,
+                paidViaSms = false,
+                detectedAt = ts(2026, Calendar.MARCH, 9),
+                paidAt = manualPayTime
+            )
+        )
+
+        val afterManualBillPay = CardRepository.computeCardOutstanding(
+            card = c,
+            cardBills = bills,
+            allCardTxns = emptyList(),
+            allPayments = emptyList()
+        )
+        // 40,000 - 15,000 = 25,000 (carryover duplicate at same paidAt is NOT double-deducted)
+        assertEquals(25_000.0, afterManualBillPay, 0.01)
+
+        // Adding a CardPayment SMS of 5,000 later deducts an additional 5,000 -> 20,000
+        val afterSmsPay = CardRepository.computeCardOutstanding(
+            card = c,
+            cardBills = bills,
+            allCardTxns = emptyList(),
+            allPayments = listOf(payment(1L, 5_000.0, smsPayTime))
+        )
+        assertEquals(20_000.0, afterSmsPay, 0.01)
+    }
 }
