@@ -49,6 +49,12 @@ interface SmsRecordDao {
     @Query("SELECT * FROM sms_records ORDER BY id ASC")
     suspend fun getAllOnce(): List<SmsRecord>
 
+    @Query("DELETE FROM sms_records WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM sms_records WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAllReplace(records: List<SmsRecord>)
 

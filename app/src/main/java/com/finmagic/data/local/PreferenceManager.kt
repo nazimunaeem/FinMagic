@@ -51,7 +51,8 @@ data class BackupPreferencesPayload(
     val webPortalPort: Int = 8080,
     val webPortalAutoStart: Boolean = false,
     val autoUpdateCheckEnabled: Boolean = true,
-    val firstScanComplete: Boolean = false
+    val firstScanComplete: Boolean = false,
+    val historySearchKeys: List<String> = emptyList()
 )
 
 @Singleton
@@ -78,6 +79,7 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
     private val PERSISTENT_BACKUP_URI = stringPreferencesKey("persistent_backup_uri")
     private val LAST_BACKUP_AT = longPreferencesKey("last_backup_at")
     private val LAST_BACKUP_LABEL = stringPreferencesKey("last_backup_label")
+    private val HISTORY_SEARCH_KEYS = stringSetPreferencesKey("history_search_keys")
 
     val notificationsEnabled: Flow<Boolean> = context.dataStore.data.map { it[NOTIFICATIONS_ENABLED] ?: true }
     val alertRules: Flow<Set<String>> = context.dataStore.data.map {
@@ -314,6 +316,37 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
         }
     }
 
+    // ---- History Search Keys ----
+
+    val historySearchKeys: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        prefs[HISTORY_SEARCH_KEYS].orEmpty()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .sortedBy { it.lowercase() }
+    }
+
+    suspend fun addHistorySearchKey(key: String) {
+        val trimmed = key.trim()
+        if (trimmed.isBlank()) return
+        context.dataStore.edit { prefs ->
+            val current = prefs[HISTORY_SEARCH_KEYS].orEmpty()
+                .filterNot { it.equals(trimmed, ignoreCase = true) }
+                .toMutableSet()
+            current.add(trimmed)
+            prefs[HISTORY_SEARCH_KEYS] = current
+        }
+    }
+
+    suspend fun removeHistorySearchKey(key: String) {
+        val trimmed = key.trim()
+        context.dataStore.edit { prefs ->
+            val current = prefs[HISTORY_SEARCH_KEYS].orEmpty()
+                .filterNot { it.equals(trimmed, ignoreCase = true) }
+                .toSet()
+            prefs[HISTORY_SEARCH_KEYS] = current
+        }
+    }
+
     suspend fun exportSnapshot(): BackupPreferencesPayload {
         return BackupPreferencesPayload(
             notificationsEnabled = notificationsEnabled.first(),
@@ -331,7 +364,8 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
             webPortalPort = webPortalPort.first(),
             webPortalAutoStart = webPortalAutoStart.first(),
             autoUpdateCheckEnabled = autoUpdateCheckEnabled.first(),
-            firstScanComplete = isFirstScanComplete.first()
+            firstScanComplete = isFirstScanComplete.first(),
+            historySearchKeys = historySearchKeys.first()
         )
     }
 
@@ -368,6 +402,10 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
             prefs[WEB_PORTAL_AUTO_START] = payload.webPortalAutoStart
             prefs[AUTO_UPDATE_CHECK] = payload.autoUpdateCheckEnabled
             prefs[FIRST_SCAN_COMPLETE] = payload.firstScanComplete
+            prefs[HISTORY_SEARCH_KEYS] = payload.historySearchKeys
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .toSet()
         }
     }
 }

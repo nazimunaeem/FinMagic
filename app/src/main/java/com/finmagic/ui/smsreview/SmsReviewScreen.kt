@@ -39,6 +39,7 @@ fun SmsReviewScreen(
     onBack: () -> Unit = {}
 ) {
     val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val unparsedSms by viewModel.unparsedSms.collectAsStateWithLifecycle()
     val allSms by viewModel.allSms.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
@@ -49,6 +50,36 @@ fun SmsReviewScreen(
     var showRuleTest by remember { mutableStateOf(false) }
     var testInitialBody by remember { mutableStateOf("") }
     var testInitialSender by remember { mutableStateOf("") }
+
+    val trimmedQuery = searchQuery.trim()
+    val filteredAllSms = remember(allSms, trimmedQuery) {
+        if (trimmedQuery.isEmpty()) allSms
+        else allSms.filter { record ->
+            (record.address?.contains(trimmedQuery, ignoreCase = true) == true) ||
+                record.body.contains(trimmedQuery, ignoreCase = true) ||
+                (if (record.isParsed) "parsed" else "unparsed").contains(trimmedQuery, ignoreCase = true)
+        }
+    }
+    val filteredUnparsedSms = remember(unparsedSms, trimmedQuery) {
+        if (trimmedQuery.isEmpty()) unparsedSms
+        else unparsedSms.filter { record ->
+            (record.address?.contains(trimmedQuery, ignoreCase = true) == true) ||
+                record.body.contains(trimmedQuery, ignoreCase = true)
+        }
+    }
+    val filteredRules = remember(rules, trimmedQuery) {
+        if (trimmedQuery.isEmpty()) rules
+        else rules.filter { rule ->
+            listOfNotNull(
+                rule.name,
+                rule.senderKey,
+                rule.actionLabel,
+                rule.category,
+                rule.requiredKeywords,
+                rule.excludedKeywords
+            ).any { it.contains(trimmedQuery, ignoreCase = true) }
+        }
+    }
 
     val clipboard = LocalClipboardManager.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -91,35 +122,86 @@ fun SmsReviewScreen(
                 Tab(
                     selected = selectedTab == ReviewTab.ALL,
                     onClick = { viewModel.selectTab(ReviewTab.ALL) },
-                    text = { Text("All (${allSms.size})") }
+                    text = {
+                        Text(
+                            if (trimmedQuery.isEmpty()) "All (${allSms.size})"
+                            else "All (${filteredAllSms.size}/${allSms.size})"
+                        )
+                    }
                 )
                 Tab(
                     selected = selectedTab == ReviewTab.UNPARSED,
                     onClick = { viewModel.selectTab(ReviewTab.UNPARSED) },
-                    text = { Text("Unparsed (${unparsedSms.size})") }
+                    text = {
+                        Text(
+                            if (trimmedQuery.isEmpty()) "Unparsed (${unparsedSms.size})"
+                            else "Unparsed (${filteredUnparsedSms.size}/${unparsedSms.size})"
+                        )
+                    }
                 )
                 Tab(
                     selected = selectedTab == ReviewTab.RULES,
                     onClick = { viewModel.selectTab(ReviewTab.RULES) },
-                    text = { Text("Rules (${rules.size})") }
+                    text = {
+                        Text(
+                            if (trimmedQuery.isEmpty()) "Rules (${rules.size})"
+                            else "Rules (${filteredRules.size}/${rules.size})"
+                        )
+                    }
                 )
             }
 
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { viewModel.setSearchQuery(it) },
+                placeholder = {
+                    Text(
+                        text = if (selectedTab == ReviewTab.RULES) {
+                            "Search rules by keyword, sender, action…"
+                        } else {
+                            "Search SMS by keyword, sender, amount…"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1
+                    )
+                },
+                leadingIcon = {
+                    Icon(Icons.Default.Search, contentDescription = "Search SMS", modifier = Modifier.size(18.dp))
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(
+                            onClick = { viewModel.setSearchQuery("") },
+                            modifier = Modifier.testTag("sms_review_search_clear")
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear search")
+                        }
+                    }
+                },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .testTag("sms_review_search_input")
+            )
+
             when (selectedTab) {
                 ReviewTab.ALL -> {
-                    if (allSms.isEmpty()) {
+                    if (filteredAllSms.isEmpty()) {
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                "No SMS records",
+                                text = if (trimmedQuery.isEmpty()) "No SMS records" else "No SMS matching \"$trimmedQuery\"",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     } else {
                         LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            items(allSms, key = { it.id }) { record ->
+                            items(filteredAllSms, key = { it.id }) { record ->
                                 AllSmsItem(
                                     record = record,
                                     onTap = { viewModel.selectRecord(record) },
@@ -138,19 +220,19 @@ fun SmsReviewScreen(
                     }
                 }
                 ReviewTab.UNPARSED -> {
-                    if (unparsedSms.isEmpty()) {
+                    if (filteredUnparsedSms.isEmpty()) {
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                "No unparsed SMS",
+                                text = if (trimmedQuery.isEmpty()) "No unparsed SMS" else "No unparsed SMS matching \"$trimmedQuery\"",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     } else {
                         LazyColumn(modifier = Modifier.fillMaxSize()) {
-                            items(unparsedSms, key = { it.id }) { record ->
+                            items(filteredUnparsedSms, key = { it.id }) { record ->
                                 UnparsedSmsItem(
                                     record = record,
                                     onTap = { viewModel.selectRecord(record) },
@@ -170,7 +252,7 @@ fun SmsReviewScreen(
                 }
                 ReviewTab.RULES -> {
                     RulesList(
-                        rules = rules,
+                        rules = filteredRules,
                         onToggle = { viewModel.toggleRule(it) },
                         onDelete = { viewModel.deleteRule(it) },
                         onDisableAll = { viewModel.disableAllRules() },

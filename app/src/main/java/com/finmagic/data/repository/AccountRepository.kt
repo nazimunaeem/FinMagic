@@ -4,6 +4,8 @@ import androidx.room.withTransaction
 import com.finmagic.data.local.AppDatabase
 import com.finmagic.data.local.dao.AccountDao
 import com.finmagic.data.local.dao.AccountTransactionDao
+import com.finmagic.data.local.dao.SmsRecordDao
+import com.finmagic.data.local.dao.SmsRuleApplicationDao
 import com.finmagic.data.local.dao.TransferDao
 import com.finmagic.data.local.entity.Account
 import com.finmagic.data.local.entity.AccountTransaction
@@ -29,7 +31,9 @@ class AccountRepository @Inject constructor(
     private val accountDao: AccountDao,
     private val txnDao: AccountTransactionDao,
     private val transferDao: TransferDao,
-    private val simResolver: com.finmagic.data.sms.SimAccountResolver
+    private val simResolver: com.finmagic.data.sms.SimAccountResolver,
+    private val smsRecordDao: SmsRecordDao,
+    private val smsRuleApplicationDao: SmsRuleApplicationDao
 ) {
 
     companion object {
@@ -922,6 +926,78 @@ class AccountRepository @Inject constructor(
 
     /** Soft-deleted (archived) accounts that can still be restored by the user. */
     fun observeArchived(): Flow<List<Account>> = accountDao.observeArchived()
+
+    /** Archived accounts paired with their stored SMS messages so users can delete SMS and then permanently remove the account. */
+    fun observeArchivedWithSms(): Flow<List<ArchivedAccountWithSms>> =
+        kotlinx.coroutines.flow.combine(
+            accountDao.observeArchived(),
+            smsRecordDao.getAllSms(),
+            smsRuleApplicationDao.observeAccountLinkedSmsIds()
+        ) { archivedAccounts, allSms, linkedRows ->
+            val linkedByAccount = linkedRows.groupBy({ it.accountId }, { it.smsRecordId })
+            archivedAccounts.map { account ->
+                val linkedIds = linkedByAccount[account.id]?.toSet().orEmpty()
+                ArchivedAccountWithSms(
+                    account = account,
+                    matchingSms = ArchivedAccountSmsMatcher.matchingSms(account, allSms, linkedIds)
+                )
+            }
+        }
+
+    /** Deletes a single stored SMS record (for archived account cleanup). */
+    suspend fun deleteArchivedAccountSms(smsRecordId: Long) {
+        database.withTransaction {
+            smsRuleApplicationDao.deleteBySmsRecordIds(listOf(smsRecordId))
+            smsRecordDao.deleteById(smsRecordId)
+        }
+    }
+
+    /** Deletes all stored SMS records matched to an archived account. */
+    suspend fun deleteArchivedAccountSmsBatch(smsRecordIds: List<Long>) {
+        if (smsRecordIds.isEmpty()) return
+        database.withTransaction {
+            smsRuleApplicationDao.deleteBySmsRecordIds(smsRecordIds)
+            smsRecordDao.deleteByIds(smsRecordIds)
+        }
+    }
+
+    /** Permanently deletes an archived non-Cash account only when no stored SMS remain for it. */
+    suspend fun deleteAccountPermanently(accountId: Long): Boolean {
+        val account = accountDao.findByIdOnce(accountId) ?: return false
+        if (!account.isArchived || account.kind == Account.KIND_CASH) return false
+
+        val linkedIds = smsRuleApplicationDao.getSmsRecordIdsForAccount(accountId).toSet()
+        val remainingSms = ArchivedAccountSmsMatcher.matchingSms(
+            account = account,
+            allSms = smsRecordDao.getAllOnce(),
+            linkedSmsIds = linkedIds
+        )
+        if (remainingSms.isNotEmpty()) return false
+
+        database.withTransaction {
+            transferDao.getForAccountOnce(accountId).forEach { transfer ->
+                txnDao.deleteByTransferId(transfer.id)
+                transferDao.deleteById(transfer.id)
+            }
+            txnDao.deleteByAccountId(accountId)
+            accountDao.deleteById(accountId)
+        }
+        return true
+    }
+
+    /** Total absolute displayed balance across active accounts (used by SmsScanWorker to detect zero-balance state). */
+    suspend fun getTotalDisplayedBalanceOnce(): Double {
+        val accounts = accountDao.getAllOnce()
+        return accounts.sumOf { acct ->
+            val txns = txnDao.getAllByAccountOnce(acct.id)
+            val bal = if (acct.kind == Account.KIND_CASH) {
+                effectiveBalance(txns)
+            } else {
+                computeAccountBalance(txns)
+            }
+            kotlin.math.abs(bal)
+        }
+    }
 
     /** Brings an archived account back into the active list. */
     suspend fun restoreAccount(accountId: Long): Boolean {

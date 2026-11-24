@@ -52,9 +52,17 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import com.finmagic.data.update.GitHubUpdateChecker
 import com.finmagic.data.update.UpdateCheckState
+import com.finmagic.data.update.UpdateInstallState
 import com.finmagic.data.web.LocalWebServer
 import com.finmagic.notification.DueDateReminderScheduler
 import com.finmagic.notification.SmsScheduler
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import com.finmagic.data.local.AppThemeMode
 import com.finmagic.data.local.PreferenceManager
 import com.finmagic.ui.accounts.AccountDetailScreen
@@ -91,7 +99,7 @@ class MainActivity : ComponentActivity() {
         val allGranted = permissions.values.all { it }
         if (allGranted) {
             SmsScheduler.schedule(this)
-            SmsScheduler.scanNow(this, force = true)
+            SmsScheduler.scanStartup(this)
             lifecycleScope.launch {
                 DueDateReminderScheduler.schedule(this@MainActivity, preferenceManager)
             }
@@ -181,7 +189,7 @@ class MainActivity : ComponentActivity() {
             requestPermissionLauncher.launch(permissions.toTypedArray())
         } else {
             SmsScheduler.schedule(this)
-            SmsScheduler.scanNow(this, force = true)
+            SmsScheduler.scanStartup(this)
             lifecycleScope.launch {
                 DueDateReminderScheduler.schedule(this@MainActivity, preferenceManager)
             }
@@ -201,6 +209,7 @@ fun MainApp(
     val scope = rememberCoroutineScope()
 
     val updateState by gitHubUpdateChecker.state.collectAsStateWithLifecycle()
+    val installState by gitHubUpdateChecker.installState.collectAsStateWithLifecycle()
     val skippedTag by preferenceManager.skippedUpdateTag.collectAsStateWithLifecycle(initialValue = null)
 
     // Sub-tab selection per section, hoisted here so it survives being covered by
@@ -209,7 +218,15 @@ fun MainApp(
     var accountsInitialTab by rememberSaveable { mutableIntStateOf(0) }
     var cardsInitialTab by rememberSaveable { mutableIntStateOf(0) }
     var homeSelectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var homeDoubleTapTrigger by rememberSaveable { mutableIntStateOf(0) }
     var lastHomeTapMs by remember { mutableLongStateOf(0L) }
+
+    androidx.compose.runtime.LaunchedEffect(installState) {
+        if (installState is UpdateInstallState.ReadyToInstall) {
+            val ready = installState as UpdateInstallState.ReadyToInstall
+            runCatching { context.startActivity(ready.intent) }
+        }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -236,6 +253,7 @@ fun MainApp(
                                 lastHomeTapMs = if (isDoubleTap) 0L else now
                                 if (isDoubleTap) {
                                     homeSelectedTab = 0
+                                    homeDoubleTapTrigger++
                                     navController.navigate(Screen.Home.route) {
                                         popUpTo(navController.graph.findStartDestination().id) {
                                             inclusive = false
@@ -279,6 +297,7 @@ fun MainApp(
                     onTabSelected = { homeSelectedTab = it },
                     cardsSubTab = cardsInitialTab,
                     onCardsSubTabSelected = { cardsInitialTab = it },
+                    scrollToTopTrigger = homeDoubleTapTrigger,
                     onAccountClick = { accountId ->
                         navController.navigate("accounts/$accountId")
                     },
@@ -363,34 +382,108 @@ fun MainApp(
     val availableUpdate = (updateState as? UpdateCheckState.UpdateAvailable)?.release
     if (availableUpdate != null && availableUpdate.tagName != skippedTag) {
         AlertDialog(
-            onDismissRequest = { gitHubUpdateChecker.dismissUpdate() },
+            onDismissRequest = {
+                if (installState !is UpdateInstallState.Downloading) {
+                    gitHubUpdateChecker.dismissUpdate()
+                }
+            },
             title = { Text("Update Available (${availableUpdate.tagName})") },
             text = {
-                Text(
-                    text = buildString {
-                        append(availableUpdate.title)
-                        if (availableUpdate.releaseNotes.isNotBlank()) {
-                            append("\n\n")
-                            append(availableUpdate.releaseNotes.take(350))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = buildString {
+                            append(availableUpdate.title)
+                            if (availableUpdate.releaseNotes.isNotBlank()) {
+                                append("\n\n")
+                                append(availableUpdate.releaseNotes.take(350))
+                            }
                         }
+                    )
+                    when (val iState = installState) {
+                        is UpdateInstallState.Downloading -> {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            LinearProgressIndicator(
+                                progress = { (iState.progress / 100f).coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = "Downloading APK (${iState.progress}%)...",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        is UpdateInstallState.NeedsInstallPermission -> {
+                            Text(
+                                text = "Allow \"Install unknown apps\" for FinMagic, then tap Update Now again.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        is UpdateInstallState.SignatureConflict -> {
+                            Text(
+                                text = "Signing certificate differs from your installed app (${iState.installedSha256.take(11)} vs ${iState.downloadedSha256.take(11)}). Android may show a package conflict unless you back up data and reinstall cleanly.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        is UpdateInstallState.Error -> {
+                            Text(
+                                text = iState.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        UpdateInstallState.Idle,
+                        is UpdateInstallState.ReadyToInstall -> Unit
                     }
-                )
+                }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        val url = availableUpdate.apkDownloadUrl ?: availableUpdate.htmlUrl
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                        }
-                        gitHubUpdateChecker.dismissUpdate()
+                when (val iState = installState) {
+                    is UpdateInstallState.Downloading -> Unit
+                    is UpdateInstallState.NeedsInstallPermission -> {
+                        Button(
+                            onClick = {
+                                runCatching { context.startActivity(iState.settingsIntent) }
+                                gitHubUpdateChecker.resetInstallState()
+                            }
+                        ) { Text("Grant Install Permission") }
                     }
-                ) {
-                    Text("Download")
+                    is UpdateInstallState.SignatureConflict -> {
+                        OutlinedButton(
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(availableUpdate.htmlUrl.ifBlank { availableUpdate.apkDownloadUrl }))
+                                    )
+                                }
+                                gitHubUpdateChecker.dismissUpdate()
+                            }
+                        ) { Text("Open Release Page") }
+                    }
+                    else -> {
+                        Button(
+                            onClick = {
+                                if (!availableUpdate.apkDownloadUrl.isNullOrBlank()) {
+                                    scope.launch {
+                                        gitHubUpdateChecker.downloadAndPrepareInstall(availableUpdate)
+                                    }
+                                } else {
+                                    runCatching {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(availableUpdate.htmlUrl)))
+                                    }
+                                    gitHubUpdateChecker.dismissUpdate()
+                                }
+                            }
+                        ) {
+                            Text(if (!availableUpdate.apkDownloadUrl.isNullOrBlank()) "Update Now" else "Download")
+                        }
+                    }
                 }
             },
             dismissButton = {
                 TextButton(
+                    enabled = installState !is UpdateInstallState.Downloading,
                     onClick = {
                         scope.launch {
                             preferenceManager.setSkippedUpdateTag(availableUpdate.tagName)

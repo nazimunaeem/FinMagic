@@ -16,6 +16,7 @@ import com.finmagic.data.local.entity.CardPayment
 import com.finmagic.data.local.entity.CardTransaction
 import com.finmagic.data.local.entity.CreditCard
 import com.finmagic.data.repository.AccountRepository
+import com.finmagic.data.repository.ArchivedAccountWithSms
 import com.finmagic.data.repository.BillRepository
 import com.finmagic.data.repository.CardRepository
 import com.finmagic.data.sms.parsers.TxnCategory
@@ -63,6 +64,7 @@ data class AccountsUiState(
     val expensesByCategory: List<CategoryTotal> = emptyList(),
     val incomeByCategory: List<CategoryTotal> = emptyList(),
     val archivedAccounts: List<Account> = emptyList(),
+    val archivedAccountsWithSms: List<ArchivedAccountWithSms> = emptyList(),
     val recentTransactions: List<AccountTransactionWithAccount> = emptyList(),
     val balanceTrails: Map<Long, AccountRepository.BalanceTrail> = emptyMap()
 )
@@ -96,7 +98,7 @@ class AccountsViewModel @Inject constructor(
         val summaries: List<AccountSummary>,
         val expenses: List<CategoryTotal>,
         val income: List<CategoryTotal>,
-        val archived: List<Account>,
+        val archivedWithSms: List<ArchivedAccountWithSms>,
         val transactions: List<AccountTransactionWithAccount>,
         val balanceTrails: Map<Long, AccountRepository.BalanceTrail>
     )
@@ -126,10 +128,10 @@ class AccountsViewModel @Inject constructor(
                 accountRepository.observeSummaries(ms, me),
                 accountRepository.observeMonthlyExpenseByCategory(ms, me),
                 accountRepository.observeMonthlyIncomeByCategory(ms, me),
-                accountRepository.observeArchived(),
+                accountRepository.observeArchivedWithSms(),
                 txnsCombined
-            ) { summaries, expenses, income, archived, (transactions, trails) ->
-                LedgerBundle(summaries, expenses, income, archived, transactions, trails)
+            ) { summaries, expenses, income, archivedWithSms, (transactions, trails) ->
+                LedgerBundle(summaries, expenses, income, archivedWithSms, transactions, trails)
             }
             val cardsActivityFlow = combine(
                 billRepository.getAllBills(),
@@ -214,7 +216,8 @@ class AccountsViewModel @Inject constructor(
                     customAccountTypes = meta.customTypes,
                     expensesByCategory = ledger.expenses.filter { it.total > 0.0 },
                     incomeByCategory = ledger.income.filter { it.total > 0.0 },
-                    archivedAccounts = ledger.archived,
+                    archivedAccounts = ledger.archivedWithSms.map { it.account },
+                    archivedAccountsWithSms = ledger.archivedWithSms,
                     recentTransactions = ledger.transactions,
                     balanceTrails = ledger.balanceTrails
                 )
@@ -253,6 +256,18 @@ class AccountsViewModel @Inject constructor(
 
     fun restoreAccount(accountId: Long) {
         viewModelScope.launch { accountRepository.restoreAccount(accountId) }
+    }
+
+    fun deleteArchivedAccountSms(smsRecordId: Long) {
+        viewModelScope.launch { accountRepository.deleteArchivedAccountSms(smsRecordId) }
+    }
+
+    fun deleteAllArchivedAccountSms(smsRecordIds: List<Long>) {
+        viewModelScope.launch { accountRepository.deleteArchivedAccountSmsBatch(smsRecordIds) }
+    }
+
+    fun deleteAccountPermanently(accountId: Long) {
+        viewModelScope.launch { accountRepository.deleteAccountPermanently(accountId) }
     }
 
     fun ensureCashAccount() {
@@ -306,6 +321,18 @@ class AccountsViewModel @Inject constructor(
     val categoryNicknames: StateFlow<Map<String, String>> =
         preferenceManager.categoryNicknames
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    val historySearchKeys: StateFlow<List<String>> =
+        preferenceManager.historySearchKeys
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun addHistorySearchKey(key: String) {
+        viewModelScope.launch { preferenceManager.addHistorySearchKey(key) }
+    }
+
+    fun removeHistorySearchKey(key: String) {
+        viewModelScope.launch { preferenceManager.removeHistorySearchKey(key) }
+    }
 
     suspend fun findPotentialCreditItems(accountId: Long, amount: Double): List<AccountTransaction> {
         return accountRepository.findPotentialCreditItems(accountId, amount)

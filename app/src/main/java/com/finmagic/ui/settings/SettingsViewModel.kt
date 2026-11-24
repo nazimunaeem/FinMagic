@@ -6,13 +6,18 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.finmagic.data.backup.BackupManager
 import com.finmagic.data.backup.BackupPreviewSummary
+import com.finmagic.data.backup.CsvBackupManager
+import com.finmagic.data.backup.CsvRestoreResult
+import com.finmagic.data.backup.SavedCsvBackup
 import com.finmagic.data.local.AppThemeMode
 import com.finmagic.data.local.PreferenceManager
 import com.finmagic.data.local.dao.CardTransactionDao
 import com.finmagic.data.repository.AccountRepository
 import com.finmagic.data.repository.BillRepository
+import com.finmagic.data.update.GitHubReleaseInfo
 import com.finmagic.data.update.GitHubUpdateChecker
 import com.finmagic.data.update.UpdateCheckState
+import com.finmagic.data.update.UpdateInstallState
 import com.finmagic.data.web.LocalWebServer
 import com.finmagic.data.web.WebServerState
 import com.finmagic.notification.DueDateReminderScheduler
@@ -46,6 +51,13 @@ sealed class BackupUiState {
     data class Message(val text: String, val isError: Boolean = false) : BackupUiState()
 }
 
+sealed class CsvRestoreState {
+    data object Idle : CsvRestoreState()
+    data class Working(val message: String) : CsvRestoreState()
+    data class Success(val message: String) : CsvRestoreState()
+    data class Error(val message: String) : CsvRestoreState()
+}
+
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     application: Application,
@@ -55,7 +67,8 @@ class SettingsViewModel @Inject constructor(
     private val preferenceManager: PreferenceManager,
     private val localWebServer: LocalWebServer,
     private val gitHubUpdateChecker: GitHubUpdateChecker,
-    private val backupManager: BackupManager
+    private val backupManager: BackupManager,
+    private val csvBackupManager: CsvBackupManager
 ) : AndroidViewModel(application) {
 
     val webServerState: StateFlow<WebServerState> = localWebServer.state
@@ -67,6 +80,7 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     val updateCheckState: StateFlow<UpdateCheckState> = gitHubUpdateChecker.state
+    val updateInstallState: StateFlow<UpdateInstallState> = gitHubUpdateChecker.installState
 
     val autoUpdateCheckEnabled: StateFlow<Boolean> = preferenceManager.autoUpdateCheckEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
@@ -76,11 +90,21 @@ class SettingsViewModel @Inject constructor(
     private val _exportState = MutableStateFlow<ExportState>(ExportState.Idle)
     val exportState: StateFlow<ExportState> = _exportState.asStateFlow()
 
+    private val _savedCsvBackups = MutableStateFlow<List<SavedCsvBackup>>(emptyList())
+    val savedCsvBackups: StateFlow<List<SavedCsvBackup>> = _savedCsvBackups.asStateFlow()
+
+    private val _csvRestoreState = MutableStateFlow<CsvRestoreState>(CsvRestoreState.Idle)
+    val csvRestoreState: StateFlow<CsvRestoreState> = _csvRestoreState.asStateFlow()
+
     private val _backupUiState = MutableStateFlow<BackupUiState>(BackupUiState.Idle)
     val backupUiState: StateFlow<BackupUiState> = _backupUiState.asStateFlow()
 
     private val _restorePreview = MutableStateFlow<Pair<Uri, BackupPreviewSummary>?>(null)
     val restorePreview: StateFlow<Pair<Uri, BackupPreviewSummary>?> = _restorePreview.asStateFlow()
+
+    init {
+        refreshSavedCsvBackups()
+    }
 
     val persistentBackupEnabled: StateFlow<Boolean> = preferenceManager.persistentBackupEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
@@ -195,6 +219,16 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun startUpdateInstall(release: GitHubReleaseInfo) {
+        viewModelScope.launch {
+            gitHubUpdateChecker.downloadAndPrepareInstall(release)
+        }
+    }
+
+    fun resetUpdateInstallState() {
+        gitHubUpdateChecker.resetInstallState()
+    }
+
     // ---- Cash entry categories (expense / income) ----
     fun addCashExpenseCategory(name: String) {
         val trimmed = name.trim()
@@ -298,132 +332,84 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    private fun escapeCsv(value: String?): String {
-        val v = value ?: ""
-        return if (v.contains(',') || v.contains('"') || v.contains('\n') || v.contains('\r')) {
-            "\"${v.replace("\"", "\"\"")}\""
-        } else {
-            v
+    fun refreshSavedCsvBackups() {
+        viewModelScope.launch {
+            _savedCsvBackups.value = withContext(Dispatchers.IO) {
+                csvBackupManager.listSavedBackups()
+            }
         }
     }
-
-    private fun csvRow(vararg cols: String?): String = cols.joinToString(",") { escapeCsv(it) }
 
     fun exportData() {
         viewModelScope.launch {
             _exportState.value = ExportState.Loading
             try {
-                val context = getApplication<Application>()
-                val file = withContext(Dispatchers.IO) {
-                    val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-                    val dateTimeFmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
-                    val outFile = File(context.filesDir, "finmagic_export_$timestamp.csv")
-
-                    val accounts = accountRepository.getAllAccountsOnce()
-                    val accountTxns = accountRepository.observeAllTransactionsWithAccount().first()
-                    val cardTxns = cardTransactionDao.observeAll().first()
-                    val bills = billRepository.getAllBills().first()
-
-                    outFile.bufferedWriter().use { writer ->
-                        writer.appendLine(
-                            csvRow(
-                                "Record Type",
-                                "Date",
-                                "Account / Card",
-                                "Category / Period",
-                                "Direction / Status",
-                                "Amount",
-                                "Currency",
-                                "Balance / Min Due",
-                                "Counterparty / Merchant",
-                                "Source / Due Date"
-                            )
-                        )
-
-                        for (acct in accounts) {
-                            val txns = accountRepository.getAllTransactionsOnce(acct.id)
-                            val balance = AccountRepository.effectiveBalance(txns)
-                            writer.appendLine(
-                                csvRow(
-                                    "ACCOUNT",
-                                    "",
-                                    "${acct.displayName} (${acct.accountMask})",
-                                    acct.kind,
-                                    if (acct.includeInTotal) "INCLUDED" else "EXCLUDED",
-                                    String.format(Locale.US, "%.2f", balance),
-                                    acct.currency,
-                                    "",
-                                    acct.bankName,
-                                    "Active account"
-                                )
-                            )
-                        }
-
-                        for (txn in accountTxns) {
-                            writer.appendLine(
-                                csvRow(
-                                    "ACCOUNT_TXN",
-                                    dateTimeFmt.format(Date(txn.occurredAt)),
-                                    txn.accountName,
-                                    txn.category ?: "Uncategorized",
-                                    txn.direction,
-                                    String.format(Locale.US, "%.2f", txn.amount),
-                                    txn.currency,
-                                    txn.balanceAfter?.let { String.format(Locale.US, "%.2f", it) } ?: "",
-                                    txn.counterparty ?: "",
-                                    if (txn.isManual) "MANUAL" else "SMS"
-                                )
-                            )
-                        }
-
-                        for (cardTx in cardTxns) {
-                            val cardLabel = listOfNotNull(
-                                cardTx.bankName.takeIf { it.isNotBlank() },
-                                "•••• ${cardTx.cardTail}"
-                            ).joinToString(" ")
-                            writer.appendLine(
-                                csvRow(
-                                    "CARD_TXN",
-                                    dateTimeFmt.format(Date(cardTx.occurredAt)),
-                                    cardLabel,
-                                    cardTx.category ?: "Card Spend",
-                                    "OUT",
-                                    String.format(Locale.US, "%.2f", cardTx.amount),
-                                    "BDT",
-                                    "",
-                                    cardTx.merchant,
-                                    if (cardTx.smsBody.startsWith("manual:")) "MANUAL" else "SMS"
-                                )
-                            )
-                        }
-
-                        for (bill in bills) {
-                            val status = when {
-                                bill.isPaid -> "PAID"
-                                bill.paidAmount > 0 -> "PARTIAL (paid ${String.format(Locale.US, "%.2f", bill.paidAmount)})"
-                                else -> "UNPAID"
-                            }
-                            writer.appendLine(
-                                csvRow(
-                                    "CARD_BILL",
-                                    dateTimeFmt.format(Date(bill.detectedAt)),
-                                    "${bill.displayName} (•••• ${bill.cardLast4})",
-                                    bill.billPeriod,
-                                    status,
-                                    String.format(Locale.US, "%.2f", bill.totalDue),
-                                    bill.currency,
-                                    String.format(Locale.US, "%.2f", bill.minDue),
-                                    "",
-                                    "Due: ${bill.dueDate}"
-                                )
-                            )
-                        }
-                    }
-                    outFile
-                }
+                val file = csvBackupManager.exportBackup()
                 _exportState.value = ExportState.Success(file)
+                refreshSavedCsvBackups()
             } catch (e: Exception) {
                 _exportState.value = ExportState.Error(e.message ?: "Export failed")
+            }
+        }
+    }
+
+    fun saveCsvToUri(file: File, destination: Uri) {
+        viewModelScope.launch {
+            val ok = csvBackupManager.copyFileToUri(file, destination)
+            _csvRestoreState.value = if (ok) {
+                CsvRestoreState.Success("Saved ${file.name} to selected location")
+            } else {
+                CsvRestoreState.Error("Could not write ${file.name} to selected location")
+            }
+        }
+    }
+
+    fun restoreCsvFile(file: File) {
+        viewModelScope.launch {
+            _csvRestoreState.value = CsvRestoreState.Working("Restoring ${file.name}...")
+            try {
+                val result = csvBackupManager.restoreFromFile(file)
+                _csvRestoreState.value = CsvRestoreState.Success(formatCsvRestoreMessage(result))
+            } catch (e: Exception) {
+                _csvRestoreState.value = CsvRestoreState.Error(e.message ?: "CSV restore failed")
+            }
+        }
+    }
+
+    fun restoreCsvFromUri(uri: Uri) {
+        viewModelScope.launch {
+            _csvRestoreState.value = CsvRestoreState.Working("Importing CSV backup...")
+            try {
+                val result = csvBackupManager.restoreFromUri(uri)
+                _csvRestoreState.value = CsvRestoreState.Success(formatCsvRestoreMessage(result))
+            } catch (e: Exception) {
+                _csvRestoreState.value = CsvRestoreState.Error(e.message ?: "CSV import failed")
+            }
+        }
+    }
+
+    fun deleteCsvBackupFile(file: File) {
+        viewModelScope.launch {
+            val deleted = withContext(Dispatchers.IO) { csvBackupManager.deleteBackupFile(file) }
+            if (deleted) {
+                if ((_exportState.value as? ExportState.Success)?.file == file) {
+                    _exportState.value = ExportState.Idle
+                }
+                refreshSavedCsvBackups()
+            }
+        }
+    }
+
+    fun clearCsvRestoreState() {
+        _csvRestoreState.value = CsvRestoreState.Idle
+    }
+
+    private fun formatCsvRestoreMessage(result: CsvRestoreResult): String {
+        return buildString {
+            append("Restored ${result.accountsRestored} accounts, ${result.transactionsRestored} txns, ")
+            append("${result.cardTransactionsRestored} card txns, ${result.billsRestored} bills")
+            if (result.skippedDuplicates > 0) {
+                append(" (${result.skippedDuplicates} duplicates skipped)")
             }
         }
     }

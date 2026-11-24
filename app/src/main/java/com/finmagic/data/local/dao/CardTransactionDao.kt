@@ -25,23 +25,29 @@ interface CardTransactionDao {
     @Query("SELECT * FROM card_transactions ORDER BY occurredAt DESC")
     fun observeAll(): Flow<List<CardTransaction>>
 
+    @Query("SELECT * FROM card_transactions ORDER BY occurredAt DESC")
+    suspend fun getAllOnce(): List<CardTransaction>
+
+    @Query("SELECT * FROM card_transactions WHERE id = :id LIMIT 1")
+    suspend fun getByIdOnce(id: Long): CardTransaction?
+
+    @Query("UPDATE card_transactions SET merchant = :merchant, amount = :amount, category = :category WHERE id = :id")
+    suspend fun updateDetails(id: Long, merchant: String, amount: Double, category: String?)
+
     @Query("SELECT MIN(occurredAt) FROM card_transactions")
     suspend fun getEarliestOccurredAt(): Long?
-
-    @Query("DELETE FROM card_transactions WHERE id = :id AND smsBody LIKE 'manual:%'")
-    suspend fun deleteManualById(id: Long)
 
     @Query("DELETE FROM card_transactions WHERE id = :id")
     suspend fun deleteById(id: Long)
 
-    @Query("SELECT * FROM card_transactions WHERE id = :id LIMIT 1")
-    suspend fun findByIdOnce(id: Long): CardTransaction?
-
     @Query("DELETE FROM card_transactions WHERE smsBody = :smsBody")
     suspend fun deleteBySmsBody(smsBody: String)
 
-    @Query("SELECT * FROM card_transactions ORDER BY occurredAt ASC, id ASC")
-    suspend fun getAllOnce(): List<CardTransaction>
+    @Query("DELETE FROM card_transactions WHERE id = :id AND smsBody LIKE 'manual:%'")
+    suspend fun deleteManualById(id: Long)
+
+    @Query("SELECT * FROM card_transactions WHERE id = :id LIMIT 1")
+    suspend fun findByIdOnce(id: Long): CardTransaction?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAllReplace(txns: List<CardTransaction>)

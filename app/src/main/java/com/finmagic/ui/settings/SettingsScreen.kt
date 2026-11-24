@@ -1,6 +1,7 @@
 package com.finmagic.ui.settings
 
 import android.Manifest
+import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.EventNote
 import androidx.compose.material.icons.filled.FolderOpen
@@ -48,17 +50,21 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.finmagic.data.backup.BackupManager
+import com.finmagic.data.backup.SavedCsvBackup
 import com.finmagic.data.local.AppThemeMode
 import com.finmagic.data.sms.parsers.TxnCategory
 import com.finmagic.data.update.UpdateCheckState
+import com.finmagic.data.update.UpdateInstallState
 import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.finmagic.ui.theme.StatusSafe
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -74,6 +80,8 @@ fun SettingsScreen(
     val alertRules by viewModel.alertRules.collectAsStateWithLifecycle()
     val alertTime by viewModel.alertTime.collectAsStateWithLifecycle()
     val exportState by viewModel.exportState.collectAsStateWithLifecycle()
+    val savedCsvBackups by viewModel.savedCsvBackups.collectAsStateWithLifecycle()
+    val csvRestoreState by viewModel.csvRestoreState.collectAsStateWithLifecycle()
     val largeDebitAlerts by viewModel.largeDebitAlerts.collectAsStateWithLifecycle()
     val largeDebitThreshold by viewModel.largeDebitThreshold.collectAsStateWithLifecycle()
     val cashExpenseCategories by viewModel.cashExpenseCategories.collectAsStateWithLifecycle()
@@ -83,6 +91,7 @@ fun SettingsScreen(
     val webPortalPort by viewModel.webPortalPort.collectAsStateWithLifecycle()
     val webPortalAutoStart by viewModel.webPortalAutoStart.collectAsStateWithLifecycle()
     val updateCheckState by viewModel.updateCheckState.collectAsStateWithLifecycle()
+    val updateInstallState by viewModel.updateInstallState.collectAsStateWithLifecycle()
     val autoUpdateEnabled by viewModel.autoUpdateCheckEnabled.collectAsStateWithLifecycle()
     val persistentBackupEnabled by viewModel.persistentBackupEnabled.collectAsStateWithLifecycle()
     val persistentBackupUri by viewModel.persistentBackupUri.collectAsStateWithLifecycle()
@@ -92,6 +101,13 @@ fun SettingsScreen(
     val restorePreview by viewModel.restorePreview.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+
+    var pendingCsvSaveFile by remember { mutableStateOf<File?>(null) }
+
+    LaunchedEffect(updateInstallState) {
+        val ready = updateInstallState as? UpdateInstallState.ReadyToInstall ?: return@LaunchedEffect
+        runCatching { context.startActivity(ready.intent) }
+    }
 
     var hasSmsPermission by remember {
         mutableStateOf(
@@ -119,6 +135,24 @@ fun SettingsScreen(
     ) { uri ->
         if (uri != null) {
             viewModel.requestRestorePreview(uri)
+        }
+    }
+
+    val saveCsvLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        val fileToSave = pendingCsvSaveFile
+        pendingCsvSaveFile = null
+        if (uri != null && fileToSave != null) {
+            viewModel.saveCsvToUri(fileToSave, uri)
+        }
+    }
+
+    val openCsvLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.restoreCsvFromUri(uri)
         }
     }
 
@@ -585,7 +619,7 @@ fun SettingsScreen(
                 }
             }
 
-            // Group 3: Data & Export
+            // Group 3: Data & Export (CSV Backup & Restore)
             SettingsGroup(title = "Data & Export") {
                 SettingsItem(
                     icon = Icons.Default.Share,
@@ -595,28 +629,57 @@ fun SettingsScreen(
                     trailing = {
                         if (exportState is ExportState.Loading) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                        } else {
+                            TextButton(
+                                onClick = { viewModel.exportData() },
+                                modifier = Modifier.testTag("export_csv_button")
+                            ) { Text("Export") }
                         }
                     }
                 )
 
                 if (exportState is ExportState.Success) {
-                    Box(modifier = Modifier.fillMaxWidth().padding(start = 56.dp, end = 16.dp, bottom = 12.dp)) {
+                    val file = (exportState as ExportState.Success).file
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 56.dp, end = 16.dp, bottom = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                pendingCsvSaveFile = file
+                                saveCsvLauncher.launch(file.name)
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("settings_save_csv_button"),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Save")
+                        }
                         Button(
                             onClick = {
-                                val file = (exportState as ExportState.Success).file
                                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
                                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                     type = "text/csv"
                                     putExtra(Intent.EXTRA_STREAM, uri)
+                                    clipData = ClipData.newRawUri("CSV", uri)
                                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                 }
                                 context.startActivity(Intent.createChooser(shareIntent, "Export FinMagic Data"))
                                 viewModel.resetExportState()
                             },
-                            modifier = Modifier.fillMaxWidth().testTag("settings_share_csv_button"),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("settings_share_csv_button"),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Share CSV File")
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Share")
                         }
                     }
                 } else if (exportState is ExportState.Error) {
@@ -626,6 +689,128 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 12.dp)
                     )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+
+                SettingsItem(
+                    icon = Icons.Default.Restore,
+                    title = "Import / Restore from CSV",
+                    description = "Load any previously exported FinMagic CSV backup or ledger CSV",
+                    onClick = {
+                        if (csvRestoreState !is CsvRestoreState.Working) {
+                            openCsvLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "*/*"))
+                        }
+                    },
+                    trailing = {
+                        TextButton(
+                            onClick = {
+                                openCsvLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "*/*"))
+                            },
+                            enabled = csvRestoreState !is CsvRestoreState.Working,
+                            modifier = Modifier.testTag("import_csv_button")
+                        ) { Text("Import") }
+                    }
+                )
+
+                when (val csvState = csvRestoreState) {
+                    is CsvRestoreState.Working -> {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 56.dp, end = 16.dp, bottom = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Text(
+                                text = csvState.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    is CsvRestoreState.Success -> {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 56.dp, end = 12.dp, bottom = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = csvState.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = StatusSafe,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { viewModel.clearCsvRestoreState() }) {
+                                Text("Dismiss")
+                            }
+                        }
+                    }
+                    is CsvRestoreState.Error -> {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 56.dp, end = 12.dp, bottom = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = csvState.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { viewModel.clearCsvRestoreState() }) {
+                                Text("Dismiss")
+                            }
+                        }
+                    }
+                    CsvRestoreState.Idle -> Unit
+                }
+
+                if (savedCsvBackups.isNotEmpty()) {
+                    HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+                    Text(
+                        text = "PREVIOUSLY SAVED CSV BACKUPS (${savedCsvBackups.size})",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)
+                    )
+                    val dateFmt = remember { SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.US) }
+                    savedCsvBackups.forEachIndexed { idx, backup ->
+                        SavedCsvBackupRow(
+                            backup = backup,
+                            formattedTime = dateFmt.format(Date(backup.lastModified)),
+                            isBusy = csvRestoreState is CsvRestoreState.Working,
+                            onRestore = { viewModel.restoreCsvFile(backup.file) },
+                            onSave = {
+                                pendingCsvSaveFile = backup.file
+                                saveCsvLauncher.launch(backup.name)
+                            },
+                            onShare = {
+                                val uri = FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.fileprovider",
+                                    backup.file
+                                )
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/csv"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    clipData = ClipData.newRawUri("CSV", uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(shareIntent, "Share ${backup.name}"))
+                            },
+                            onDelete = { viewModel.deleteCsvBackupFile(backup.file) }
+                        )
+                        if (idx < savedCsvBackups.lastIndex) {
+                            HorizontalDivider(modifier = Modifier.padding(start = 16.dp, end = 16.dp))
+                        }
+                    }
                 }
             }
 
@@ -865,21 +1050,101 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Button(
-                            onClick = {
-                                val targetUrl = release.apkDownloadUrl ?: release.htmlUrl
-                                runCatching {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)))
+                        when (val iState = updateInstallState) {
+                            is UpdateInstallState.Downloading -> {
+                                LinearProgressIndicator(
+                                    progress = { (iState.progress / 100f).coerceIn(0f, 1f) },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Text(
+                                    text = "Downloading ${release.tagName} (${iState.progress}%)...",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            is UpdateInstallState.NeedsInstallPermission -> {
+                                Text(
+                                    text = "Allow \"Install unknown apps\" for FinMagic, then tap Update Now again.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Button(
+                                    onClick = {
+                                        runCatching { context.startActivity(iState.settingsIntent) }
+                                        viewModel.resetUpdateInstallState()
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("grant_install_permission_button")
+                                ) {
+                                    Text("Grant Install Permission")
                                 }
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("download_update_button")
-                        ) {
-                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Download ${release.tagName}")
+                            }
+                            is UpdateInstallState.SignatureConflict -> {
+                                Text(
+                                    text = "Signing certificate differs from installed app (${iState.installedSha256.take(11)} vs ${iState.downloadedSha256.take(11)}). Android may reject in-place update — back up data first or install from GitHub.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                OutlinedButton(
+                                    onClick = {
+                                        runCatching {
+                                            context.startActivity(
+                                                Intent(Intent.ACTION_VIEW, Uri.parse(release.htmlUrl.ifBlank { release.apkDownloadUrl }))
+                                            )
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("open_release_page_button")
+                                ) {
+                                    Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Open Release Page")
+                                }
+                            }
+                            is UpdateInstallState.Error -> {
+                                Text(
+                                    text = iState.message,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Button(
+                                    onClick = { viewModel.startUpdateInstall(release) },
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("download_update_button")
+                                ) {
+                                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Retry Update ${release.tagName}")
+                                }
+                            }
+                            UpdateInstallState.Idle,
+                            is UpdateInstallState.ReadyToInstall -> {
+                                Button(
+                                    onClick = {
+                                        if (!release.apkDownloadUrl.isNullOrBlank()) {
+                                            viewModel.startUpdateInstall(release)
+                                        } else {
+                                            runCatching {
+                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.htmlUrl)))
+                                            }
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("download_update_button")
+                                ) {
+                                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(if (!release.apkDownloadUrl.isNullOrBlank()) "Update Now (${release.tagName})" else "Download ${release.tagName}")
+                                }
+                            }
                         }
                     }
                 }
@@ -1225,6 +1490,95 @@ fun SettingsItem(
         if (trailing != null) {
             Box(modifier = Modifier.padding(start = 8.dp)) {
                 trailing()
+            }
+        }
+    }
+}
+
+@Composable
+private fun SavedCsvBackupRow(
+    backup: SavedCsvBackup,
+    formattedTime: String,
+    isBusy: Boolean,
+    onRestore: () -> Unit,
+    onSave: () -> Unit,
+    onShare: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val sizeLabel = remember(backup.sizeBytes) {
+        if (backup.sizeBytes >= 1024L * 1024L) {
+            String.format(Locale.US, "%.1f MB", backup.sizeBytes / (1024.0 * 1024.0))
+        } else {
+            val kb = (backup.sizeBytes / 1024.0).coerceAtLeast(0.1)
+            String.format(Locale.US, "%.1f KB", kb)
+        }
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = backup.name,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = "$formattedTime • $sizeLabel",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            TextButton(
+                onClick = onRestore,
+                enabled = !isBusy,
+                modifier = Modifier.testTag("restore_saved_csv_${backup.name}")
+            ) {
+                Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Restore")
+            }
+            TextButton(
+                onClick = onSave,
+                enabled = !isBusy,
+                modifier = Modifier.testTag("save_saved_csv_${backup.name}")
+            ) {
+                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Save")
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(
+                onClick = onShare,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("share_saved_csv_${backup.name}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Share,
+                    contentDescription = "Share ${backup.name}",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            IconButton(
+                onClick = onDelete,
+                enabled = !isBusy,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("delete_saved_csv_${backup.name}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Delete ${backup.name}",
+                    tint = MaterialTheme.colorScheme.error
+                )
             }
         }
     }

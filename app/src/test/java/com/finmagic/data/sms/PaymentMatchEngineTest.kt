@@ -422,6 +422,7 @@ class FakeBillDao : BillDao {
     override fun getBillsForCard(cardId: Long): Flow<List<BillWithCard>> = flowOf(emptyList())
     override fun getAllBillsWithCardsForHistory(): Flow<List<BillWithCard>> = flowOf(emptyList())
     override fun getTotalUnpaid(): Flow<Double?> = flowOf(bills.filter { !it.isPaid && !it.isSuperseded }.sumOf { it.totalDue - it.paidAmount })
+    override suspend fun getTotalUnpaidOnce(): Double = bills.filter { !it.isPaid && !it.isSuperseded }.sumOf { (it.totalDue - it.paidAmount).coerceAtLeast(0.0) }
     override fun getUnpaidCount(): Flow<Int> = flowOf(bills.count { !it.isPaid && !it.isSuperseded })
     override fun getOverdueCount(today: String): Flow<Int> = flowOf(0)
     override fun getUnpaidTotalForCard(cardId: Long): Flow<Double?> = flowOf(0.0)

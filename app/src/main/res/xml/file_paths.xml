@@ -3,4 +3,7 @@
     <files-path
         name="exports"
         path="." />
+    <cache-path
+        name="updates"
+        path="." />
 </paths>

@@ -57,6 +57,9 @@ interface BillDao {
     @Query("SELECT SUM(totalDue - paidAmount) FROM bills WHERE isPaid = 0 AND isSuperseded = 0")
     fun getTotalUnpaid(): Flow<Double?>
 
+    @Query("SELECT COALESCE(SUM(totalDue - paidAmount), 0.0) FROM bills WHERE isPaid = 0 AND isSuperseded = 0")
+    suspend fun getTotalUnpaidOnce(): Double
+
     @Query("SELECT COUNT(*) FROM bills WHERE isPaid = 0 AND isSuperseded = 0")
     fun getUnpaidCount(): Flow<Int>
 

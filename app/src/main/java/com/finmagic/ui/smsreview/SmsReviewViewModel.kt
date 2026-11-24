@@ -65,6 +65,9 @@ class SmsReviewViewModel @Inject constructor(
     private val _selectedTab = MutableStateFlow(ReviewTab.ALL)
     val selectedTab: StateFlow<ReviewTab> = _selectedTab.asStateFlow()
 
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
     private val _selectedRecord = MutableStateFlow<SmsRecord?>(null)
     val selectedRecord: StateFlow<SmsRecord?> = _selectedRecord.asStateFlow()
 
@@ -73,6 +76,10 @@ class SmsReviewViewModel @Inject constructor(
 
     fun selectTab(tab: ReviewTab) {
         _selectedTab.value = tab
+    }
+
+    fun setSearchQuery(query: String) {
+        _searchQuery.value = query
     }
 
     fun selectRecord(record: SmsRecord?) {

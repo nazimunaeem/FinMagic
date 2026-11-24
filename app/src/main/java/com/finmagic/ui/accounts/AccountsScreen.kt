@@ -8,11 +8,13 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.AccountBalance
+import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.*
 import androidx.compose.material3.DatePickerDialog
@@ -55,12 +57,14 @@ fun AccountsScreen(
     onTabSelected: (Int) -> Unit = {},
     onAccountClick: (Long) -> Unit,
     onCardClick: (Long) -> Unit = {},
+    scrollToTopTrigger: Int = 0,
     showTopBar: Boolean = true,
     showPill: Boolean = true,
     viewModel: AccountsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val categoryNicknames by viewModel.categoryNicknames.collectAsStateWithLifecycle()
+    val historySearchKeys by viewModel.historySearchKeys.collectAsStateWithLifecycle()
     val settingsViewModel: com.finmagic.ui.settings.SettingsViewModel = hiltViewModel()
     val cashExpenseCategories by settingsViewModel.cashExpenseCategories.collectAsStateWithLifecycle()
     val cashIncomeCategories by settingsViewModel.cashIncomeCategories.collectAsStateWithLifecycle()
@@ -69,8 +73,17 @@ fun AccountsScreen(
     var showManageTypesDialog by remember { mutableStateOf(false) }
     var detailTxn by remember { mutableStateOf<AccountTransactionWithAccount?>(null) }
     var editTxn by remember { mutableStateOf<AccountTransaction?>(null) }
+    var managingArchivedSmsAccountId by remember { mutableStateOf<Long?>(null) }
+    var confirmPermanentDeleteAccount by remember { mutableStateOf<Account?>(null) }
     var selectedTab by rememberSaveable { mutableIntStateOf(initialTab) }
     LaunchedEffect(initialTab) { selectedTab = initialTab }
+
+    val listState = rememberLazyListState()
+    LaunchedEffect(scrollToTopTrigger) {
+        if (scrollToTopTrigger > 0 && selectedTab == 0) {
+            listState.animateScrollToItem(0)
+        }
+    }
 
     val pagerYear by viewModel.selectedYear.collectAsStateWithLifecycle()
     val pagerMonth by viewModel.selectedMonth.collectAsStateWithLifecycle()
@@ -103,13 +116,35 @@ fun AccountsScreen(
     val monthCategories = remember(monthTxns) {
         monthTxns.mapNotNull { it.category }.filter { it.isNotBlank() }.distinct().sorted()
     }
+    val suggestedSearchKeys = remember(state.recentTransactions, historySearchKeys) {
+        val savedLower = historySearchKeys.map { it.lowercase() }.toSet()
+        buildList<String> {
+            state.recentTransactions.forEach { txn ->
+                listOfNotNull(txn.counterparty, txn.category, txn.accountName)
+                    .map { it.trim() }
+                    .filter { it.length in 2..24 && !savedLower.contains(it.lowercase()) }
+                    .forEach { candidate ->
+                        if (none { it.equals(candidate, ignoreCase = true) }) {
+                            add(candidate)
+                        }
+                    }
+            }
+        }.take(6)
+    }
     val filteredMonthTxns = remember(monthTxns, state.recentTransactions, searchQuery, categoryFilter) {
         val q = searchQuery.trim()
         val base = if (q.isEmpty()) monthTxns else state.recentTransactions
         base.filter { txn ->
             val matchesCategory = categoryFilter == null || categoryFilter == txn.category
             val matchesSearch = q.isEmpty() ||
-                listOf(txn.counterparty, txn.category, txn.accountName).any {
+                listOf(
+                    txn.counterparty,
+                    txn.category,
+                    txn.accountName,
+                    txn.smsBody,
+                    String.format(Locale.US, "%.2f", txn.amount),
+                    if (txn.direction == AccountTransaction.DIRECTION_IN) "credit in" else "debit out"
+                ).any {
                     it != null && it.contains(q, ignoreCase = true)
                 }
             matchesCategory && matchesSearch
@@ -173,6 +208,7 @@ fun AccountsScreen(
                 }
             }
             LazyColumn(
+                state = listState,
                 contentPadding = PaddingValues(
                     top = 2.dp,
                     bottom = 76.dp
@@ -317,20 +353,22 @@ fun AccountsScreen(
                         }
                     }
 
-                    if (state.archivedAccounts.isNotEmpty()) {
+                    if (state.archivedAccountsWithSms.isNotEmpty()) {
                         item {
                             Text(
-                                text = "ARCHIVED (${state.archivedAccounts.size})",
+                                text = "ARCHIVED (${state.archivedAccountsWithSms.size})",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(horizontal = 12.dp).padding(top = 3.dp, bottom = 0.dp)
                             )
                         }
-                        items(state.archivedAccounts, key = { "archived_${it.id}" }) { account ->
+                        items(state.archivedAccountsWithSms, key = { "archived_${it.account.id}" }) { item ->
                             ArchivedAccountRow(
-                                account = account,
-                                onRestore = { viewModel.restoreAccount(account.id) },
+                                item = item,
+                                onRestore = { viewModel.restoreAccount(item.account.id) },
+                                onManageSms = { managingArchivedSmsAccountId = item.account.id },
+                                onDeletePermanently = { confirmPermanentDeleteAccount = item.account },
                                 modifier = Modifier.padding(horizontal = 12.dp)
                             )
                         }
@@ -358,11 +396,30 @@ fun AccountsScreen(
                     }
 
                     item {
+                        val trimmedQuery = searchQuery.trim()
+                        val canSaveSearchKey = trimmedQuery.isNotEmpty() &&
+                            historySearchKeys.none { it.equals(trimmedQuery, ignoreCase = true) }
                         SearchField(
                             query = searchQuery,
                             onQueryChange = { searchQuery = it },
+                            onSaveKey = if (canSaveSearchKey) {
+                                { viewModel.addHistorySearchKey(trimmedQuery) }
+                            } else null,
                             modifier = Modifier.padding(horizontal = 12.dp)
                         )
+                    }
+                    if (historySearchKeys.isNotEmpty() || suggestedSearchKeys.isNotEmpty()) {
+                        item(key = "history_search_keys_row") {
+                            HistorySearchKeyListRow(
+                                savedKeys = historySearchKeys,
+                                suggestedKeys = suggestedSearchKeys,
+                                activeQuery = searchQuery,
+                                onSelectKey = { key ->
+                                    searchQuery = if (searchQuery.trim().equals(key, ignoreCase = true)) "" else key
+                                },
+                                onRemoveKey = { key -> viewModel.removeHistorySearchKey(key) }
+                            )
+                        }
                     }
                     if (monthCategories.isNotEmpty()) {
                         item {
@@ -542,6 +599,35 @@ fun AccountsScreen(
             onDelete = {
                 viewModel.deleteTransaction(txn.id)
                 editTxn = null
+            }
+        )
+    }
+
+    managingArchivedSmsAccountId?.let { acctId ->
+        val liveItem = state.archivedAccountsWithSms.firstOrNull { it.account.id == acctId }
+        if (liveItem != null) {
+            ArchivedAccountSmsDialog(
+                item = liveItem,
+                onDismiss = { managingArchivedSmsAccountId = null },
+                onDeleteSms = { smsId -> viewModel.deleteArchivedAccountSms(smsId) },
+                onDeleteAllSms = { ids -> viewModel.deleteAllArchivedAccountSms(ids) },
+                onRequestPermanentDelete = {
+                    managingArchivedSmsAccountId = null
+                    confirmPermanentDeleteAccount = liveItem.account
+                }
+            )
+        } else {
+            managingArchivedSmsAccountId = null
+        }
+    }
+
+    confirmPermanentDeleteAccount?.let { acct ->
+        PermanentDeleteAccountDialog(
+            account = acct,
+            onDismiss = { confirmPermanentDeleteAccount = null },
+            onConfirm = {
+                viewModel.deleteAccountPermanently(acct.id)
+                confirmPermanentDeleteAccount = null
             }
         )
     }
@@ -1392,38 +1478,59 @@ internal fun AccountCard(
 }
 
 @Composable
-private fun ArchivedAccountRow(
-    account: Account,
-    onRestore: () -> Unit,
-    modifier: Modifier = Modifier
+private fun HistorySearchKeyListRow(
+    savedKeys: List<String>,
+    suggestedKeys: List<String>,
+    activeQuery: String,
+    onSelectKey: (String) -> Unit,
+    onRemoveKey: (String) -> Unit
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        Row(
-            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Text(
+            text = "SEARCH KEY LIST",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("history_search_key_list"),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Icon(
-                imageVector = accountIcon(account.kind),
-                contentDescription = account.kind,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(28.dp)
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                text = account.displayName,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-            )
-            TextButton(onClick = onRestore) { Text("Restore") }
+            items(savedKeys, key = { "saved_key_${it.lowercase()}" }) { key ->
+                val isSelected = activeQuery.trim().equals(key, ignoreCase = true)
+                InputChip(
+                    selected = isSelected,
+                    onClick = { onSelectKey(key) },
+                    label = { Text(key, style = MaterialTheme.typography.labelSmall) },
+                    trailingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Remove $key from search key list",
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clickable { onRemoveKey(key) }
+                                .testTag("history_remove_search_key_${key.lowercase()}")
+                        )
+                    },
+                    modifier = Modifier.testTag("history_search_key_chip_${key.lowercase()}")
+                )
+            }
+            items(suggestedKeys, key = { "suggested_key_${it.lowercase()}" }) { key ->
+                val isSelected = activeQuery.trim().equals(key, ignoreCase = true)
+                FilterChip(
+                    selected = isSelected,
+                    onClick = { onSelectKey(key) },
+                    label = { Text(key, style = MaterialTheme.typography.labelSmall) },
+                    modifier = Modifier.testTag("history_search_key_chip_${key.lowercase()}")
+                )
+            }
         }
     }
 }
@@ -1432,14 +1539,16 @@ private fun ArchivedAccountRow(
 private fun SearchField(
     query: String,
     onQueryChange: (String) -> Unit,
+    onSaveKey: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
         modifier = modifier
-            .fillMaxWidth(),
-        placeholder = { Text("Search…", style = MaterialTheme.typography.bodySmall, maxLines = 1) },
+            .fillMaxWidth()
+            .testTag("history_search_input"),
+        placeholder = { Text("Search merchant, account, SMS, amount…", style = MaterialTheme.typography.bodySmall, maxLines = 1) },
         singleLine = true,
         shape = RoundedCornerShape(10.dp),
         textStyle = MaterialTheme.typography.bodySmall,
@@ -1447,9 +1556,26 @@ private fun SearchField(
             Icon(Icons.Filled.Search, contentDescription = "Search", modifier = Modifier.size(18.dp))
         },
         trailingIcon = {
-            if (query.isNotEmpty()) {
-                IconButton(onClick = { onQueryChange("") }) {
-                    Icon(Icons.Filled.Close, contentDescription = "Clear search")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (onSaveKey != null) {
+                    IconButton(
+                        onClick = onSaveKey,
+                        modifier = Modifier.testTag("history_save_search_key_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.BookmarkAdd,
+                            contentDescription = "Save to Search Key List",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                if (query.isNotEmpty()) {
+                    IconButton(
+                        onClick = { onQueryChange("") },
+                        modifier = Modifier.testTag("history_search_clear_button")
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = "Clear search")
+                    }
                 }
             }
         }

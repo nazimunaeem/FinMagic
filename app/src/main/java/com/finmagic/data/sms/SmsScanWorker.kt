@@ -20,6 +20,7 @@ import com.finmagic.data.repository.AccountRepository
 import com.finmagic.data.sms.parsers.LedgerDirection
 import com.finmagic.data.sms.parsers.SmsClassification
 import com.finmagic.notification.NotificationHelper
+import com.finmagic.notification.SmsScheduler
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.first
@@ -38,8 +39,9 @@ class SmsScanWorker @AssistedInject constructor(
     private val paymentMatchEngine: PaymentMatchEngine,
     private val accountRepository: AccountRepository,
     private val activityLogger: ActivityLogger,
-    private val preferenceManager: PreferenceManager
-    , private val smsTeachingEngine: SmsTeachingEngine
+    private val preferenceManager: PreferenceManager,
+    private val smsTeachingEngine: SmsTeachingEngine,
+    private val scanStatusManager: SmsScanStatusManager
 ) : CoroutineWorker(context, params) {
 
     companion object {
@@ -54,65 +56,110 @@ class SmsScanWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             scanMutex.withLock {
-                activityLogger.info(TAG, "Starting SMS scan...")
+                val scanMode = inputData.getString(SmsScheduler.KEY_SCAN_MODE) ?: SmsScheduler.MODE_STANDARD
+                activityLogger.info(TAG, "Starting SMS scan (mode=$scanMode)...")
+                var parsedCount = 0
                 try {
-                    val isFirstScan = !preferenceManager.isFirstScanComplete.first()
-                    val afterTimestamp = if (isFirstScan) 0L else System.currentTimeMillis() - (60L * 24 * 60 * 60 * 1000)
-
-                    activityLogger.info(TAG, "Scan mode: ${if (isFirstScan) "FIRST (all SMS)" else "incremental (60 days)"}")
-
-                    // Per-scan settings (Phase 5 debit alerts).
                     val debitAlertsEnabled = preferenceManager.largeDebitAlerts.first() &&
                         preferenceManager.notificationsEnabled.first()
                     val debitThreshold = preferenceManager.largeDebitThreshold.first()
+                    val isFirstScan = !preferenceManager.isFirstScanComplete.first()
 
-                    var totalRead = 0
-                    var parsedCount = 0
-                    var errorCount = 0
-
-                    smsReader.readAllSmsStream(afterTimestamp = afterTimestamp).collect { batch ->
-                        for (message in batch) {
+                    if (scanMode == SmsScheduler.MODE_STARTUP_RECENT_50) {
+                        scanStatusManager.startScan(
+                            phase = ScanPhase.RECENT_50,
+                            message = "Scanning last 50 SMS...",
+                            total = 50
+                        )
+                        val recent = smsReader.readRecentSms(count = 50).reversed()
+                        val filteredRecent = recent.filter { smsReader.matchesFinancialKeywords(it.address, it.body) }
+                        var processedRecent = 0
+                        for (message in filteredRecent) {
+                            processedRecent++
                             try {
-                                totalRead++
-                                val parsed = processMessage(
-                                    message,
-                                    debitAlertsEnabled,
-                                    debitThreshold
-                                )
-                                if (parsed != null) {
-                                    parsedCount++
-                                }
+                                val parsed = processMessage(message, debitAlertsEnabled, debitThreshold)
+                                if (parsed != null) parsedCount++
                             } catch (e: Exception) {
-                                errorCount++
-                                activityLogger.error(TAG, "Error processing SMS #$totalRead: ${e.message}")
+                                activityLogger.error(TAG, "Error processing recent SMS #$processedRecent: ${e.message}")
+                            }
+                            scanStatusManager.updateProgress(
+                                phase = ScanPhase.RECENT_50,
+                                processed = processedRecent,
+                                total = filteredRecent.size.coerceAtLeast(1),
+                                parsed = parsedCount,
+                                message = "Scanning last 50 SMS ($processedRecent/${filteredRecent.size})..."
+                            )
+                        }
+                        finalizeScanPass()
+
+                        val totalAccountBal = accountRepository.getTotalDisplayedBalanceOnce()
+                        val totalUnpaidBills = billDao.getTotalUnpaidOnce()
+                        val balancesZero = totalAccountBal < 0.01 && totalUnpaidBills < 0.01
+
+                        if (balancesZero || isFirstScan) {
+                            activityLogger.info(TAG, "Balances are zero or first scan pending; starting auto full scan")
+                            scanStatusManager.startScan(
+                                phase = ScanPhase.FULL_AUTO,
+                                message = if (balancesZero) {
+                                    "Balances are zero — auto full SMS scan..."
+                                } else {
+                                    "Running initial full SMS scan..."
+                                }
+                            )
+                            parsedCount += runStreamScan(
+                                afterTimestamp = 0L,
+                                phase = ScanPhase.FULL_AUTO,
+                                debitAlertsEnabled = debitAlertsEnabled,
+                                debitThreshold = debitThreshold,
+                                label = "Auto full scan"
+                            )
+                            finalizeScanPass()
+                        }
+                    } else {
+                        val afterTimestamp = if (isFirstScan || scanMode == SmsScheduler.MODE_FULL) {
+                            0L
+                        } else {
+                            System.currentTimeMillis() - (60L * 24 * 60 * 60 * 1000)
+                        }
+                        val phase = if (afterTimestamp == 0L) ScanPhase.FULL_AUTO else ScanPhase.MANUAL_OR_PERIODIC
+                        val label = if (afterTimestamp == 0L) "Full SMS scan" else "Scanning recent SMS"
+                        scanStatusManager.startScan(phase = phase, message = "$label...")
+
+                        parsedCount += runStreamScan(
+                            afterTimestamp = afterTimestamp,
+                            phase = phase,
+                            debitAlertsEnabled = debitAlertsEnabled,
+                            debitThreshold = debitThreshold,
+                            label = label
+                        )
+                        finalizeScanPass()
+
+                        // If balances remain zero after an incremental scan, fall back to a full scan automatically.
+                        if (afterTimestamp > 0L) {
+                            val totalAccountBal = accountRepository.getTotalDisplayedBalanceOnce()
+                            val totalUnpaidBills = billDao.getTotalUnpaidOnce()
+                            if (totalAccountBal < 0.01 && totalUnpaidBills < 0.01) {
+                                activityLogger.info(TAG, "Balances are zero after incremental scan; running auto full scan")
+                                scanStatusManager.startScan(
+                                    phase = ScanPhase.FULL_AUTO,
+                                    message = "Balances are zero — auto full SMS scan..."
+                                )
+                                parsedCount += runStreamScan(
+                                    afterTimestamp = 0L,
+                                    phase = ScanPhase.FULL_AUTO,
+                                    debitAlertsEnabled = debitAlertsEnabled,
+                                    debitThreshold = debitThreshold,
+                                    label = "Auto full scan"
+                                )
+                                finalizeScanPass()
                             }
                         }
-
-                        activityLogger.info(TAG, "Batch done: $totalRead total, $parsedCount parsed, $errorCount errors")
                     }
-
-                    // Remove legacy duplicate rows (same card + month + currency) created
-                    // before period normalization existed, then keep only the latest unpaid
-                    // bill per card+currency active — older unpaid bills are superseded
-                    // (their dues are included in the newer bill).
-                    removeDuplicateBills()
-                    billDao.markAllButLatestSuperseded()
-
-                    // Apply stored payment SMS to unpaid bills — including payments that
-                    // were recorded before their bill statement arrived in this scan.
-                    val appliedPayments = paymentMatchEngine.applyUnappliedPayments()
-                    if (appliedPayments > 0) {
-                        activityLogger.info(TAG, "Auto-applied $appliedPayments card payment(s) to bills")
-                    }
-
-                    activityLogger.info(TAG, "SMS scan completed. Total: $totalRead, Parsed: $parsedCount, Errors: $errorCount")
 
                     val now = System.currentTimeMillis()
                     val ninetyDaysAgo = now - (90L * 24 * 60 * 60 * 1000)
                     smsRecordDao.deleteOldParsedSms(ninetyDaysAgo)
 
-                    // Clean up SMS rows duplicated by the old concurrent-scan race:
-                    // keep one row per body, carrying over the parsed flag.
                     smsRecordDao.mergeParsedStatusOfDuplicates()
                     smsRecordDao.deleteDuplicateSmsRecords()
 
@@ -120,13 +167,63 @@ class SmsScanWorker @AssistedInject constructor(
                     billDao.clearSmsBodyForOldPaidBills(thirtyDaysAgo)
 
                     preferenceManager.setFirstScanComplete(true)
-
+                    scanStatusManager.finishScan(parsedCount)
                     Result.success()
                 } catch (e: Exception) {
-                activityLogger.error(TAG, "Fatal error during SMS scan: ${e.message}")
-                Result.retry()
+                    activityLogger.error(TAG, "Fatal error during SMS scan: ${e.message}")
+                    scanStatusManager.finishScan(parsedCount, "Scan paused")
+                    Result.retry()
                 }
             }
+        }
+    }
+
+    private suspend fun runStreamScan(
+        afterTimestamp: Long,
+        phase: ScanPhase,
+        debitAlertsEnabled: Boolean,
+        debitThreshold: Double,
+        label: String
+    ): Int {
+        var totalRead = 0
+        var parsedCount = 0
+        var errorCount = 0
+        smsReader.readAllSmsStream(afterTimestamp = afterTimestamp).collect { batch ->
+            for (message in batch) {
+                try {
+                    totalRead++
+                    val parsed = processMessage(
+                        message,
+                        debitAlertsEnabled,
+                        debitThreshold
+                    )
+                    if (parsed != null) {
+                        parsedCount++
+                    }
+                } catch (e: Exception) {
+                    errorCount++
+                    activityLogger.error(TAG, "Error processing SMS #$totalRead: ${e.message}")
+                }
+            }
+            scanStatusManager.updateProgress(
+                phase = phase,
+                processed = totalRead,
+                total = 0,
+                parsed = parsedCount,
+                message = "$label ($totalRead SMS checked)..."
+            )
+            activityLogger.info(TAG, "Batch done: $totalRead total, $parsedCount parsed, $errorCount errors")
+        }
+        activityLogger.info(TAG, "$label completed. Total: $totalRead, Parsed: $parsedCount, Errors: $errorCount")
+        return parsedCount
+    }
+
+    private suspend fun finalizeScanPass() {
+        removeDuplicateBills()
+        billDao.markAllButLatestSuperseded()
+        val appliedPayments = paymentMatchEngine.applyUnappliedPayments()
+        if (appliedPayments > 0) {
+            activityLogger.info(TAG, "Auto-applied $appliedPayments card payment(s) to bills")
         }
     }
 

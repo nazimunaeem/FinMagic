@@ -46,6 +46,15 @@ class SmsReader @Inject constructor(
         private const val BATCH_SIZE = 200
     }
 
+    fun matchesFinancialKeywords(address: String?, body: String): Boolean {
+        val lowerBody = body.lowercase()
+        val lowerSender = (address ?: "").lowercase()
+        return FILTER_KEYWORDS.any { keyword ->
+            val kw = keyword.lowercase()
+            lowerBody.contains(kw) || lowerSender.contains(kw)
+        }
+    }
+
     fun hasSmsPermission(): Boolean {
         return ContextCompat.checkSelfPermission(
             context,
@@ -103,13 +112,8 @@ class SmsReader @Inject constructor(
                     try {
                         val body = cursor.getString(bodyIdx) ?: continue
                         val sender = cursor.getString(addressIdx) ?: ""
-                        val lowerBody = body.lowercase()
-                        val lowerSender = sender.lowercase()
 
-                        val isBankSms = FILTER_KEYWORDS.any { keyword ->
-                            val kw = keyword.lowercase()
-                            lowerBody.contains(kw) || lowerSender.contains(kw)
-                        }
+                        val isBankSms = matchesFinancialKeywords(sender, body)
 
                         if (isBankSms) {
                             batch.add(
