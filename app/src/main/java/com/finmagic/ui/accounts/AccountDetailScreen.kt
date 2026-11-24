@@ -533,10 +533,11 @@ private fun CashEntryDialog(
                 }
                 OutlinedTextField(
                     value = amountText,
-                    onValueChange = { amountText = it },
+                    onValueChange = { amountText = it.filter(Char::isDigit) },
                     label = { Text("Amount") },
+                    placeholder = { Text("0") },
                     singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
                 )
                 Box(modifier = Modifier.fillMaxWidth()) {

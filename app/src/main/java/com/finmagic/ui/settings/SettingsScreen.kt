@@ -1,7 +1,6 @@
 package com.finmagic.ui.settings
 
 import android.Manifest
-import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -27,7 +26,6 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.EventNote
-import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Language
@@ -39,6 +37,7 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -61,11 +60,9 @@ import com.finmagic.data.local.AppThemeMode
 import com.finmagic.data.sms.parsers.TxnCategory
 import com.finmagic.data.update.UpdateCheckState
 import com.finmagic.data.update.UpdateInstallState
-import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.finmagic.ui.theme.StatusSafe
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -76,18 +73,17 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     onNavigateToCategories: () -> Unit = {},
     onNavigateToSmsReview: () -> Unit = {},
-    onNavigateToArchivedAccounts: () -> Unit = {}
+    onNavigateToArchivedAccounts: () -> Unit = {},
+    onNavigateToBackupRestore: () -> Unit = {}
 ) {
     val notificationsEnabled by viewModel.notificationsEnabled.collectAsStateWithLifecycle()
     val alertRules by viewModel.alertRules.collectAsStateWithLifecycle()
     val alertTime by viewModel.alertTime.collectAsStateWithLifecycle()
-    val exportState by viewModel.exportState.collectAsStateWithLifecycle()
-    val savedCsvBackups by viewModel.savedCsvBackups.collectAsStateWithLifecycle()
-    val csvRestoreState by viewModel.csvRestoreState.collectAsStateWithLifecycle()
     val largeDebitAlerts by viewModel.largeDebitAlerts.collectAsStateWithLifecycle()
     val largeDebitThreshold by viewModel.largeDebitThreshold.collectAsStateWithLifecycle()
     val cashExpenseCategories by viewModel.cashExpenseCategories.collectAsStateWithLifecycle()
     val cashIncomeCategories by viewModel.cashIncomeCategories.collectAsStateWithLifecycle()
+    val includeLastMonthCarry by viewModel.includeLastMonthCarry.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val webServerState by viewModel.webServerState.collectAsStateWithLifecycle()
     val webPortalPort by viewModel.webPortalPort.collectAsStateWithLifecycle()
@@ -96,16 +92,11 @@ fun SettingsScreen(
     val updateInstallState by viewModel.updateInstallState.collectAsStateWithLifecycle()
     val autoUpdateEnabled by viewModel.autoUpdateCheckEnabled.collectAsStateWithLifecycle()
     val persistentBackupEnabled by viewModel.persistentBackupEnabled.collectAsStateWithLifecycle()
-    val persistentBackupUri by viewModel.persistentBackupUri.collectAsStateWithLifecycle()
     val lastBackupAt by viewModel.lastBackupAt.collectAsStateWithLifecycle()
     val lastBackupLabel by viewModel.lastBackupLabel.collectAsStateWithLifecycle()
-    val backupUiState by viewModel.backupUiState.collectAsStateWithLifecycle()
-    val restorePreview by viewModel.restorePreview.collectAsStateWithLifecycle()
     val archivedAccountCount by viewModel.archivedAccountCount.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
-
-    var pendingCsvSaveFile by remember { mutableStateOf<File?>(null) }
 
     LaunchedEffect(updateInstallState) {
         val ready = updateInstallState as? UpdateInstallState.ReadyToInstall ?: return@LaunchedEffect
@@ -123,40 +114,6 @@ fun SettingsScreen(
     ) { isGranted ->
         hasSmsPermission = isGranted
         if (isGranted) viewModel.triggerRescan()
-    }
-
-    val createBackupLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json")
-    ) { uri ->
-        if (uri != null) {
-            viewModel.saveBackupToUri(uri)
-        }
-    }
-
-    val openBackupLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            viewModel.requestRestorePreview(uri)
-        }
-    }
-
-    val saveCsvLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("text/csv")
-    ) { uri ->
-        val fileToSave = pendingCsvSaveFile
-        pendingCsvSaveFile = null
-        if (uri != null && fileToSave != null) {
-            viewModel.saveCsvToUri(fileToSave, uri)
-        }
-    }
-
-    val openCsvLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            viewModel.restoreCsvFromUri(uri)
-        }
     }
 
     Scaffold(
@@ -442,6 +399,30 @@ fun SettingsScreen(
             // Group: Accounts
             SettingsGroup(title = "Accounts") {
                 SettingsItem(
+                    icon = Icons.Filled.TrendingUp,
+                    title = "Include Last Month's Carry",
+                    description = if (includeLastMonthCarry) {
+                        "Yes • Adds previous month's net carry-over to monthly summary"
+                    } else {
+                        "No • Shows only current month's In, Out, and Net"
+                    },
+                    onClick = { viewModel.setIncludeLastMonthCarry(!includeLastMonthCarry) },
+                    trailing = {
+                        Switch(
+                            checked = includeLastMonthCarry,
+                            onCheckedChange = { viewModel.setIncludeLastMonthCarry(it) },
+                            modifier = Modifier.testTag("include_last_month_carry_switch"),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = StatusSafe
+                            )
+                        )
+                    }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+
+                SettingsItem(
                     icon = Icons.Filled.Inventory2,
                     title = "Archived Accounts",
                     description = if (archivedAccountCount > 0) {
@@ -496,341 +477,27 @@ fun SettingsScreen(
                 )
             }
 
-            // Group: Backup & Persistent File
-            SettingsGroup(title = "Backup & Persistent File") {
-                val backupStatusDesc = remember(persistentBackupEnabled, lastBackupAt, lastBackupLabel) {
-                    val pathInfo = lastBackupLabel
-                        ?: "${BackupManager.PERSISTENT_RELATIVE_DIR}/${BackupManager.PERSISTENT_FILE_NAME}"
+            // Group: Backup & Restore (separate screen)
+            SettingsGroup(title = "Backup & Restore") {
+                val backupNavDesc = remember(persistentBackupEnabled, lastBackupAt, lastBackupLabel) {
                     if (lastBackupAt > 0L) {
                         val fmt = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.US)
-                        "Survives uninstall at $pathInfo • Last saved ${fmt.format(Date(lastBackupAt))}"
+                        val dest = lastBackupLabel ?: BackupManager.PERSISTENT_RELATIVE_DIR
+                        "Last saved ${fmt.format(Date(lastBackupAt))} ($dest)"
+                    } else if (persistentBackupEnabled) {
+                        "Auto-backup enabled • JSON persistent backup & CSV export/restore"
                     } else {
-                        "Auto-saves account balances, card outstandings & database to $pathInfo (survives uninstall)"
+                        "Manage JSON backups, custom sync file, and CSV export/restore"
                     }
                 }
-
                 SettingsItem(
                     icon = Icons.Default.Backup,
-                    title = "Auto-Save Persistent Backup",
-                    description = backupStatusDesc,
-                    trailing = {
-                        Switch(
-                            checked = persistentBackupEnabled,
-                            onCheckedChange = { viewModel.setPersistentBackupEnabled(it) },
-                            modifier = Modifier.testTag("persistent_backup_switch"),
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                                checkedTrackColor = StatusSafe
-                            )
-                        )
-                    }
+                    title = "Backup & Restore",
+                    description = backupNavDesc,
+                    onClick = onNavigateToBackupRestore,
+                    modifier = Modifier.testTag("settings_backup_restore_item"),
+                    trailing = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
                 )
-
-                HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
-
-                SettingsItem(
-                    icon = Icons.Default.Save,
-                    title = "Backup Now",
-                    description = "Write full backup JSON (balances + database + preferences) right now",
-                    onClick = {
-                        if (backupUiState !is BackupUiState.Working) {
-                            viewModel.backupNow()
-                        }
-                    },
-                    trailing = {
-                        if (backupUiState is BackupUiState.Working) {
-                            CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                        } else {
-                            TextButton(
-                                onClick = { viewModel.backupNow() },
-                                modifier = Modifier.testTag("backup_now_button")
-                            ) { Text("Save") }
-                        }
-                    }
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
-
-                SettingsItem(
-                    icon = Icons.Default.FolderOpen,
-                    title = "Save Copy / Set Custom File",
-                    description = if (persistentBackupUri != null) {
-                        "Custom file linked for auto-sync. Tap to change location"
-                    } else {
-                        "Choose any folder or cloud drive document to also sync backups"
-                    },
-                    onClick = {
-                        createBackupLauncher.launch(BackupManager.PERSISTENT_FILE_NAME)
-                    },
-                    trailing = {
-                        TextButton(
-                            onClick = { createBackupLauncher.launch(BackupManager.PERSISTENT_FILE_NAME) },
-                            modifier = Modifier.testTag("backup_choose_file_button")
-                        ) { Text(if (persistentBackupUri != null) "Change" else "Choose") }
-                    }
-                )
-
-                if (persistentBackupUri != null) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 56.dp, end = 16.dp, bottom = 4.dp),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        TextButton(
-                            onClick = { viewModel.clearCustomBackupUri() },
-                            modifier = Modifier.testTag("backup_clear_uri_button")
-                        ) {
-                            Text("Unlink custom file")
-                        }
-                    }
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
-
-                SettingsItem(
-                    icon = Icons.Default.Restore,
-                    title = "Restore from Backup",
-                    description = "Load a FinMagic_Backup.json file after reinstall or on a new phone",
-                    onClick = {
-                        if (backupUiState !is BackupUiState.Working) {
-                            openBackupLauncher.launch(arrayOf("application/json", "*/*"))
-                        }
-                    },
-                    trailing = {
-                        TextButton(
-                            onClick = { openBackupLauncher.launch(arrayOf("application/json", "*/*")) },
-                            enabled = backupUiState !is BackupUiState.Working,
-                            modifier = Modifier.testTag("restore_backup_button")
-                        ) { Text("Restore") }
-                    }
-                )
-
-                when (val bState = backupUiState) {
-                    is BackupUiState.Working -> {
-                        Text(
-                            text = bState.message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 12.dp)
-                        )
-                    }
-                    is BackupUiState.Message -> {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 56.dp, end = 12.dp, bottom = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = bState.text,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (bState.isError) MaterialTheme.colorScheme.error else StatusSafe,
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextButton(onClick = { viewModel.clearBackupMessage() }) {
-                                Text("Dismiss")
-                            }
-                        }
-                    }
-                    BackupUiState.Idle -> Unit
-                }
-            }
-
-            // Group 3: Data & Export (CSV Backup & Restore)
-            SettingsGroup(title = "Data & Export") {
-                SettingsItem(
-                    icon = Icons.Default.Share,
-                    title = "Export All Data",
-                    description = "Export accounts, transactions, card spend, and bills to CSV",
-                    onClick = { if (exportState !is ExportState.Loading) viewModel.exportData() },
-                    trailing = {
-                        if (exportState is ExportState.Loading) {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                        } else {
-                            TextButton(
-                                onClick = { viewModel.exportData() },
-                                modifier = Modifier.testTag("export_csv_button")
-                            ) { Text("Export") }
-                        }
-                    }
-                )
-
-                if (exportState is ExportState.Success) {
-                    val file = (exportState as ExportState.Success).file
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 56.dp, end = 16.dp, bottom = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                pendingCsvSaveFile = file
-                                saveCsvLauncher.launch(file.name)
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("settings_save_csv_button"),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Save")
-                        }
-                        Button(
-                            onClick = {
-                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/csv"
-                                    putExtra(Intent.EXTRA_STREAM, uri)
-                                    clipData = ClipData.newRawUri("CSV", uri)
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(Intent.createChooser(shareIntent, "Export FinMagic Data"))
-                                viewModel.resetExportState()
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("settings_share_csv_button"),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Share")
-                        }
-                    }
-                } else if (exportState is ExportState.Error) {
-                    Text(
-                        text = (exportState as ExportState.Error).message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 12.dp)
-                    )
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
-
-                SettingsItem(
-                    icon = Icons.Default.Restore,
-                    title = "Import / Restore from CSV",
-                    description = "Load any previously exported FinMagic CSV backup or ledger CSV",
-                    onClick = {
-                        if (csvRestoreState !is CsvRestoreState.Working) {
-                            openCsvLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "*/*"))
-                        }
-                    },
-                    trailing = {
-                        TextButton(
-                            onClick = {
-                                openCsvLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "*/*"))
-                            },
-                            enabled = csvRestoreState !is CsvRestoreState.Working,
-                            modifier = Modifier.testTag("import_csv_button")
-                        ) { Text("Import") }
-                    }
-                )
-
-                when (val csvState = csvRestoreState) {
-                    is CsvRestoreState.Working -> {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 56.dp, end = 16.dp, bottom = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Text(
-                                text = csvState.message,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                    is CsvRestoreState.Success -> {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 56.dp, end = 12.dp, bottom = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = csvState.message,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = StatusSafe,
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextButton(onClick = { viewModel.clearCsvRestoreState() }) {
-                                Text("Dismiss")
-                            }
-                        }
-                    }
-                    is CsvRestoreState.Error -> {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 56.dp, end = 12.dp, bottom = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = csvState.message,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextButton(onClick = { viewModel.clearCsvRestoreState() }) {
-                                Text("Dismiss")
-                            }
-                        }
-                    }
-                    CsvRestoreState.Idle -> Unit
-                }
-
-                if (savedCsvBackups.isNotEmpty()) {
-                    HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
-                    Text(
-                        text = "PREVIOUSLY SAVED CSV BACKUPS (${savedCsvBackups.size})",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)
-                    )
-                    val dateFmt = remember { SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.US) }
-                    savedCsvBackups.forEachIndexed { idx, backup ->
-                        SavedCsvBackupRow(
-                            backup = backup,
-                            formattedTime = dateFmt.format(Date(backup.lastModified)),
-                            isBusy = csvRestoreState is CsvRestoreState.Working,
-                            onRestore = { viewModel.restoreCsvFile(backup.file) },
-                            onSave = {
-                                pendingCsvSaveFile = backup.file
-                                saveCsvLauncher.launch(backup.name)
-                            },
-                            onShare = {
-                                val uri = FileProvider.getUriForFile(
-                                    context,
-                                    "${context.packageName}.fileprovider",
-                                    backup.file
-                                )
-                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/csv"
-                                    putExtra(Intent.EXTRA_STREAM, uri)
-                                    clipData = ClipData.newRawUri("CSV", uri)
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(Intent.createChooser(shareIntent, "Share ${backup.name}"))
-                            },
-                            onDelete = { viewModel.deleteCsvBackupFile(backup.file) }
-                        )
-                        if (idx < savedCsvBackups.lastIndex) {
-                            HorizontalDivider(modifier = Modifier.padding(start = 16.dp, end = 16.dp))
-                        }
-                    }
-                }
             }
 
             // Group: Wi-Fi / Hotspot Web Portal
@@ -1186,67 +853,6 @@ fun SettingsScreen(
                 )
             }
         }
-
-        val pendingRestore = restorePreview
-        if (pendingRestore != null) {
-            val summary = pendingRestore.second
-            val dateFmt = remember { SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.US) }
-            AlertDialog(
-                onDismissRequest = { viewModel.dismissRestorePreview() },
-                title = { Text("Restore Backup?") },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "This will replace all current accounts, cards, transactions, bills, and SMS rules with the backup snapshot.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    text = "Saved: ${dateFmt.format(Date(summary.createdAt))} (v${summary.appVersion})",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "Net Asset: Tk %,.0f".format(summary.netAsset),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    text = "${summary.accountCount} accounts • ${summary.cardCount} cards • ${summary.transactionCount} txns • ${summary.billCount} bills • ${summary.ruleCount} rules",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = { viewModel.confirmRestoreFromPending() },
-                        modifier = Modifier.testTag("confirm_restore_backup_button")
-                    ) {
-                        Text("Restore Now")
-                    }
-                },
-                dismissButton = {
-                    TextButton(
-                        onClick = { viewModel.dismissRestorePreview() },
-                        modifier = Modifier.testTag("cancel_restore_backup_button")
-                    ) {
-                        Text("Cancel")
-                    }
-                }
-            )
-        }
     }
 }
 
@@ -1516,7 +1122,7 @@ fun SettingsItem(
 }
 
 @Composable
-private fun SavedCsvBackupRow(
+internal fun SavedCsvBackupRow(
     backup: SavedCsvBackup,
     formattedTime: String,
     isBusy: Boolean,

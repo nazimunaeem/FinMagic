@@ -291,7 +291,10 @@ fun AccountsScreen(
                             monthOut = state.monthOut,
                             monthLabel = headerMonthLabel,
                             assetsTotal = state.assetsTotal,
-                            liabilitiesTotal = state.accountLiabilitiesTotal + state.cardLiabilityTotal
+                            liabilitiesTotal = state.accountLiabilitiesTotal + state.cardLiabilityTotal,
+                            includeLastMonthCarry = state.includeLastMonthCarry,
+                            lastMonthCarryAmount = state.lastMonthCarryAmount,
+                            prevMonthShortLabel = state.prevMonthShortLabel
                         )
                     }
 
@@ -475,7 +478,10 @@ fun AccountsScreen(
                             monthOut = state.monthOut,
                             monthLabel = headerMonthLabel,
                             assetsTotal = state.assetsTotal,
-                            liabilitiesTotal = state.accountLiabilitiesTotal + state.cardLiabilityTotal
+                            liabilitiesTotal = state.accountLiabilitiesTotal + state.cardLiabilityTotal,
+                            includeLastMonthCarry = state.includeLastMonthCarry,
+                            lastMonthCarryAmount = state.lastMonthCarryAmount,
+                            prevMonthShortLabel = state.prevMonthShortLabel
                         )
                     }
 
@@ -891,11 +897,11 @@ internal fun AddEntryDialog(
 
                 OutlinedTextField(
                     value = amountText,
-                    onValueChange = { amountText = it },
+                    onValueChange = { amountText = it.filter(Char::isDigit) },
                     label = { Text("Amount") },
                     singleLine = true,
-                    placeholder = { Text("0.00") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    placeholder = { Text("0") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -1046,6 +1052,16 @@ internal fun AddEntryDialog(
     }
 }
 
+private fun formatBdtAmount(amount: Double, forceCents: Boolean = true): String {
+    val absVal = kotlin.math.abs(amount)
+    val hasCents = forceCents || kotlin.math.abs(absVal - kotlin.math.round(absVal)) >= 0.005
+    return if (hasCents) {
+        String.format(Locale.US, "৳%,.2f", absVal)
+    } else {
+        String.format(Locale.US, "৳%,.0f", absVal)
+    }
+}
+
 @Composable
 internal fun TotalBalanceHeader(
     totalBalance: Double,
@@ -1053,17 +1069,28 @@ internal fun TotalBalanceHeader(
     monthOut: Double,
     monthLabel: String,
     assetsTotal: Double = totalBalance,
-    liabilitiesTotal: Double = 0.0
+    liabilitiesTotal: Double = 0.0,
+    includeLastMonthCarry: Boolean = false,
+    lastMonthCarryAmount: Double = 0.0,
+    prevMonthShortLabel: String = ""
 ) {
-    val net = monthIn - monthOut
+    val hasCarry = includeLastMonthCarry && kotlin.math.abs(lastMonthCarryAmount) >= 0.01
+    val effectiveIn = monthIn + if (hasCarry && lastMonthCarryAmount > 0.0) lastMonthCarryAmount else 0.0
+    val effectiveOut = monthOut + if (hasCarry && lastMonthCarryAmount < 0.0) -lastMonthCarryAmount else 0.0
+    val net = effectiveIn - effectiveOut
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 1.dp),
-        shape = RoundedCornerShape(14.dp),
+            .padding(horizontal = 12.dp, vertical = 1.dp)
+            .testTag("net_worth_card"),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1072,80 +1099,121 @@ internal fun TotalBalanceHeader(
                 Text(
                     text = if (liabilitiesTotal > 0.0) "Net Worth" else "Total Balance",
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f),
+                    fontWeight = FontWeight.SemiBold
                 )
                 Text(
                     text = monthLabel,
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.65f),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
                     fontWeight = FontWeight.Medium
                 )
             }
-            Text(
-                text = String.format(Locale.US, "Tk %,.2f", totalBalance),
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = if (totalBalance < 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
-            )
-            if (liabilitiesTotal > 0.0) {
-                Spacer(modifier = Modifier.height(6.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                val balancePrefix = if (totalBalance < -0.005) "−" else ""
+                Text(
+                    text = balancePrefix + formatBdtAmount(totalBalance, forceCents = true),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (totalBalance < -0.005) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (hasCarry) {
+                    val carryPrefix = if (lastMonthCarryAmount >= 0) "+" else "−"
+                    val carrySource = if (prevMonthShortLabel.isNotBlank()) "Carry ($prevMonthShortLabel)" else "Carry"
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f)
+                    ) {
+                        Text(
+                            text = "$carrySource $carryPrefix${formatBdtAmount(lastMonthCarryAmount)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (lastMonthCarryAmount >= 0) StatusSafe else MaterialTheme.colorScheme.error,
+                            modifier = Modifier
+                                .padding(horizontal = 7.dp, vertical = 2.dp)
+                                .testTag("net_worth_carry_badge")
+                        )
+                    }
+                }
+            }
+
+            if (assetsTotal != 0.0 || liabilitiesTotal > 0.0) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Assets: ${formatTkAmount(assetsTotal)}",
-                        style = MaterialTheme.typography.labelSmall,
+                        text = "Assets ${formatBdtAmount(assetsTotal)}",
+                        style = MaterialTheme.typography.labelMedium,
                         color = StatusSafe,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "Liabilities: −${formatTkAmount(liabilitiesTotal)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                        fontWeight = FontWeight.SemiBold
+                        text = "Liabilities ${if (liabilitiesTotal > 0.005) "−" else ""}${formatBdtAmount(liabilitiesTotal)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (liabilitiesTotal > 0.005) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.weight(1f)) {
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.48f)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val netPrefix = if (net < -0.005) "−" else ""
                     Text(
-                        text = "In",
-                        style = MaterialTheme.typography.labelSmall,
+                        text = "↓ In ${String.format(Locale.US, "৳%,.0f", effectiveIn)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
                         color = StatusSafe,
-                        fontWeight = FontWeight.Bold
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
                     Text(
-                        text = String.format(Locale.US, "Tk %,.0f", monthIn),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Out",
-                        style = MaterialTheme.typography.labelSmall,
+                        text = "↑ Out ${String.format(Locale.US, "৳%,.0f", effectiveOut)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.error,
-                        fontWeight = FontWeight.Bold
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.weight(1f)
                     )
                     Text(
-                        text = String.format(Locale.US, "Tk %,.0f", monthOut),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Net",
-                        style = MaterialTheme.typography.labelSmall,
+                        text = "Net $netPrefix${String.format(Locale.US, "৳%,.0f", kotlin.math.abs(net))}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
                         color = if (net >= 0) StatusSafe else MaterialTheme.colorScheme.error,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = String.format(Locale.US, "Tk %,.0f", net),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
@@ -1314,12 +1382,7 @@ fun accountIcon(kind: String): ImageVector = when (kind) {
 
 internal fun formatTkAmount(amount: Double): String {
     val absVal = kotlin.math.abs(amount)
-    val hasCents = kotlin.math.abs(absVal - kotlin.math.round(absVal)) >= 0.005
-    return if (hasCents) {
-        String.format(Locale.US, "Tk %,.2f", absVal)
-    } else {
-        String.format(Locale.US, "Tk %,.0f", absVal)
-    }
+    return String.format(Locale.US, "Tk %,.2f", absVal)
 }
 
 @Composable
@@ -1425,7 +1488,7 @@ private fun CardsLiabilitySummaryCard(
                     }
                 }
                 Text(
-                    text = String.format(Locale.US, "−Tk %,.0f", cardTotal),
+                    text = String.format(Locale.US, "−Tk %,.2f", cardTotal),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.error,
@@ -1453,7 +1516,7 @@ private fun CardsLiabilitySummaryCard(
                                 text = when {
                                     item.unpaidBillCount > 0 -> String.format(
                                         Locale.US,
-                                        "%d unpaid bill%s · Bill Tk %,.0f",
+                                        "%d unpaid bill%s · Bill Tk %,.2f",
                                         item.unpaidBillCount,
                                         if (item.unpaidBillCount == 1) "" else "s",
                                         item.unpaidBillAmount
@@ -1466,7 +1529,7 @@ private fun CardsLiabilitySummaryCard(
                             )
                         }
                         Text(
-                            text = String.format(Locale.US, "Tk %,.0f", item.unpaidAmount),
+                            text = String.format(Locale.US, "Tk %,.2f", item.unpaidAmount),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold,
                             color = if (item.unpaidAmount > 0.0) MaterialTheme.colorScheme.error else StatusSafe

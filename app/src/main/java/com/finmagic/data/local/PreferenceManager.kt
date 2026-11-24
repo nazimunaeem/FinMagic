@@ -52,7 +52,8 @@ data class BackupPreferencesPayload(
     val webPortalAutoStart: Boolean = false,
     val autoUpdateCheckEnabled: Boolean = true,
     val firstScanComplete: Boolean = false,
-    val historySearchKeys: List<String> = emptyList()
+    val historySearchKeys: List<String> = emptyList(),
+    val includeLastMonthCarry: Boolean = true
 )
 
 @Singleton
@@ -80,6 +81,7 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
     private val LAST_BACKUP_AT = longPreferencesKey("last_backup_at")
     private val LAST_BACKUP_LABEL = stringPreferencesKey("last_backup_label")
     private val HISTORY_SEARCH_KEYS = stringSetPreferencesKey("history_search_keys")
+    private val INCLUDE_LAST_MONTH_CARRY = booleanPreferencesKey("include_last_month_carry")
 
     val notificationsEnabled: Flow<Boolean> = context.dataStore.data.map { it[NOTIFICATIONS_ENABLED] ?: true }
     val alertRules: Flow<Set<String>> = context.dataStore.data.map {
@@ -347,6 +349,14 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
         }
     }
 
+    val includeLastMonthCarry: Flow<Boolean> = context.dataStore.data.map {
+        it[INCLUDE_LAST_MONTH_CARRY] ?: true
+    }
+
+    suspend fun setIncludeLastMonthCarry(enabled: Boolean) {
+        context.dataStore.edit { it[INCLUDE_LAST_MONTH_CARRY] = enabled }
+    }
+
     suspend fun exportSnapshot(): BackupPreferencesPayload {
         return BackupPreferencesPayload(
             notificationsEnabled = notificationsEnabled.first(),
@@ -365,7 +375,8 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
             webPortalAutoStart = webPortalAutoStart.first(),
             autoUpdateCheckEnabled = autoUpdateCheckEnabled.first(),
             firstScanComplete = isFirstScanComplete.first(),
-            historySearchKeys = historySearchKeys.first()
+            historySearchKeys = historySearchKeys.first(),
+            includeLastMonthCarry = includeLastMonthCarry.first()
         )
     }
 
@@ -406,6 +417,7 @@ class PreferenceManager @Inject constructor(@ApplicationContext private val cont
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
                 .toSet()
+            prefs[INCLUDE_LAST_MONTH_CARRY] = payload.includeLastMonthCarry
         }
     }
 }

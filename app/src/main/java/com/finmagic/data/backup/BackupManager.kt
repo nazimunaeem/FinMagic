@@ -213,7 +213,8 @@ class BackupManager @Inject constructor(
                 webPortalAutoStart = rawPrefs.webPortalAutoStart,
                 autoUpdateCheckEnabled = rawPrefs.autoUpdateCheckEnabled,
                 firstScanComplete = rawPrefs.firstScanComplete,
-                historySearchKeys = safeList(rawPrefs.historySearchKeys)
+                historySearchKeys = safeList(rawPrefs.historySearchKeys),
+                includeLastMonthCarry = rawPrefs.includeLastMonthCarry
             )
             return FinMagicBackup(
                 schemaVersion = raw.schemaVersion,
@@ -459,8 +460,8 @@ class BackupManager @Inject constructor(
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 runCatching {
-                    writeToMediaStoreDownloads(json)
-                    labels.add("$PERSISTENT_RELATIVE_DIR/$PERSISTENT_FILE_NAME")
+                    val savedPath = writeToMediaStoreDownloads(json)
+                    labels.add(savedPath)
                 }.onFailure { err ->
                     if (lastError == null) lastError = err
                 }
@@ -581,47 +582,73 @@ class BackupManager @Inject constructor(
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
-    private fun writeToMediaStoreDownloads(json: String) {
+    private fun writeToMediaStoreDownloads(json: String): String {
         val resolver = context.contentResolver
         val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
         val targetRelPath = "${Environment.DIRECTORY_DOWNLOADS}/FinMagic"
 
-        val existingUri: Uri? = resolver.query(
-            collection,
-            arrayOf(MediaStore.Downloads._ID),
-            "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
-            arrayOf(PERSISTENT_FILE_NAME, "$targetRelPath%"),
-            "${MediaStore.MediaColumns.DATE_MODIFIED} DESC"
-        )?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val id = cursor.getLong(0)
-                ContentUris.withAppendedId(collection, id)
-            } else {
-                null
+        // Reuse an existing backup file owned by this app install if writable.
+        val existingRow: Pair<Uri, String>? = runCatching {
+            resolver.query(
+                collection,
+                arrayOf(MediaStore.Downloads._ID, MediaStore.MediaColumns.DISPLAY_NAME),
+                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND (${MediaStore.MediaColumns.DISPLAY_NAME} = ? OR ${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?)",
+                arrayOf("$targetRelPath%", PERSISTENT_FILE_NAME, "FinMagic_Backup_%.json"),
+                "${MediaStore.MediaColumns.DATE_MODIFIED} DESC"
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val id = cursor.getLong(0)
+                    val name = cursor.getString(1) ?: PERSISTENT_FILE_NAME
+                    ContentUris.withAppendedId(collection, id) to name
+                } else {
+                    null
+                }
             }
-        }
+        }.getOrNull()
 
-        if (existingUri != null) {
+        if (existingRow != null) {
+            val (existingUri, existingName) = existingRow
             val updated = runCatching { writeTextToUri(existingUri, json) }.isSuccess
-            if (updated) return
+            if (updated) return "$targetRelPath/$existingName"
         }
 
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, PERSISTENT_FILE_NAME)
-            put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, targetRelPath)
-            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US)
+            .format(java.util.Date())
+
+        val attempts = listOf(
+            targetRelPath to PERSISTENT_FILE_NAME,
+            targetRelPath to "FinMagic_Backup_$timestamp.json",
+            Environment.DIRECTORY_DOWNLOADS to "FinMagic_Backup_$timestamp.json"
+        )
+
+        var lastException: Throwable? = null
+        for ((relPath, fileName) in attempts) {
+            val result = runCatching {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, relPath)
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                val insertedUri = resolver.insert(collection, values)
+                    ?: error("Could not create backup file in Downloads.")
+                try {
+                    writeTextToUri(insertedUri, json)
+                    val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                    resolver.update(insertedUri, done, null, null)
+                } catch (t: Throwable) {
+                    runCatching { resolver.delete(insertedUri, null, null) }
+                    throw t
+                }
+                "$relPath/$fileName"
+            }
+            if (result.isSuccess) {
+                return result.getOrThrow()
+            }
+            lastException = result.exceptionOrNull()
         }
-        val insertedUri = resolver.insert(collection, values)
-            ?: error("Could not create backup file in Downloads.")
-        try {
-            writeTextToUri(insertedUri, json)
-            val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
-            resolver.update(insertedUri, done, null, null)
-        } catch (t: Throwable) {
-            runCatching { resolver.delete(insertedUri, null, null) }
-            throw t
-        }
+
+        throw lastException ?: IllegalStateException("Could not create backup file in Downloads.")
     }
 
     private fun resolveDisplayName(uri: Uri): String? {

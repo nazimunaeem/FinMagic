@@ -116,10 +116,10 @@ object ChartsCalculator {
 
         for (account in countedAccounts) {
             val allTxns = txnsByAccount[account.id].orEmpty()
-            val txnsUpToCutoff = allTxns.filter { it.occurredAt <= cutoffMillis }
             val balance = if (account.kind == Account.KIND_CASH) {
-                AccountRepository.effectiveBalance(txnsUpToCutoff)
+                computeCashBalanceAt(cutoffMillis, allTxns)
             } else {
+                val txnsUpToCutoff = allTxns.filter { it.occurredAt <= cutoffMillis }
                 AccountRepository.computeAccountBalance(txnsUpToCutoff)
             }
             if (account.isLiability) {
@@ -173,6 +173,63 @@ object ChartsCalculator {
         val totalLiabilities = accountLiabilities + knownCardOutstanding + orphanCardLiabilities
         val netAsset = assets - totalLiabilities
         return Triple(netAsset, assets, totalLiabilities)
+    }
+
+    internal fun computeCashBalanceAt(
+        cutoffMillis: Long,
+        allTxns: List<AccountTransaction>
+    ): Double {
+        val txnsUpToCutoff = allTxns.filter { it.occurredAt <= cutoffMillis }
+        val latestDirectSet = allTxns
+            .filter { it.category == TxnCategory.DIRECT_SET }
+            .maxWithOrNull(compareBy({ it.occurredAt }, { it.id }))
+            ?: return AccountRepository.effectiveBalance(txnsUpToCutoff)
+
+        val setAt = latestDirectSet.occurredAt
+        if (cutoffMillis >= setAt) {
+            return AccountRepository.effectiveBalance(txnsUpToCutoff)
+        }
+
+        // Before a DirectSet ("Without Adjustment Entry") correction, treat the written-off
+        // portion of pre-adjustment ATM/wallet cash inflows as already spent so old withdrawals
+        // do not inflate historical Net Asset.
+        val txnsAtSet = allTxns.filter { it.occurredAt <= setAt }
+        val targetAtSet = AccountRepository.effectiveBalance(txnsAtSet)
+        val rawAtSet = AccountRepository.ledgerBalance(txnsAtSet)
+        val excess = rawAtSet - targetAtSet
+        if (excess <= 0.005) {
+            return AccountRepository.effectiveBalance(txnsUpToCutoff)
+        }
+
+        val isPreSetAutoCashIn: (AccountTransaction) -> Boolean = { txn ->
+            txn.category != TxnCategory.DIRECT_SET &&
+                txn.direction == AccountTransaction.DIRECTION_IN &&
+                (!txn.isManual || txn.transferId != null)
+        }
+        val autoInTotalAtSet = txnsAtSet.filter(isPreSetAutoCashIn).sumOf { it.amount }
+        val spentFraction = if (autoInTotalAtSet > 0.0) {
+            (excess / autoInTotalAtSet).coerceIn(0.0, 1.0)
+        } else {
+            0.0
+        }
+
+        val adjusted = txnsUpToCutoff
+            .filter { it.category != TxnCategory.DIRECT_SET }
+            .sumOf { txn ->
+                when {
+                    isPreSetAutoCashIn(txn) -> txn.amount * (1.0 - spentFraction)
+                    txn.direction == AccountTransaction.DIRECTION_IN -> txn.amount
+                    else -> -txn.amount
+                }
+            }
+        val unabsorbedExcess = (excess - autoInTotalAtSet).coerceAtLeast(0.0)
+        val minFloor = kotlin.math.min(0.0, targetAtSet)
+        val result = (adjusted - unabsorbedExcess).coerceAtLeast(minFloor)
+        return if (unabsorbedExcess > 0.005) {
+            result.coerceAtMost(max(0.0, targetAtSet))
+        } else {
+            result
+        }
     }
 
     fun buildDailyNetAssetSeries(

@@ -74,6 +74,13 @@ sealed class Screen(
         unselectedIcon = Icons.Outlined.Inventory2
     )
 
+    data object BackupRestore : Screen(
+        route = "backup_restore",
+        title = "Backup & Restore",
+        selectedIcon = Icons.Filled.Backup,
+        unselectedIcon = Icons.Outlined.Backup
+    )
+
 }
 
 val bottomNavScreens = listOf(

@@ -67,7 +67,10 @@ data class AccountsUiState(
     val incomeByCategory: List<CategoryTotal> = emptyList(),
     val archivedAccounts: List<Account> = emptyList(),
     val recentTransactions: List<AccountTransactionWithAccount> = emptyList(),
-    val balanceTrails: Map<Long, AccountRepository.BalanceTrail> = emptyMap()
+    val balanceTrails: Map<Long, AccountRepository.BalanceTrail> = emptyMap(),
+    val includeLastMonthCarry: Boolean = true,
+    val lastMonthCarryAmount: Double = 0.0,
+    val prevMonthShortLabel: String = ""
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -116,7 +119,8 @@ class AccountsViewModel @Inject constructor(
         val allBills: List<BillWithCard>,
         val cards: List<CreditCard>,
         val cardTxns: List<CardTransaction>,
-        val cardPayments: List<CardPayment>
+        val cardPayments: List<CardPayment>,
+        val includeLastMonthCarry: Boolean
     )
 
     val uiState: StateFlow<AccountsUiState> =
@@ -151,8 +155,9 @@ class AccountsViewModel @Inject constructor(
             val metaFlow = combine(
                 preferenceManager.allAccountTypes,
                 preferenceManager.customAccountTypes,
-                cardsActivityFlow
-            ) { allTypes, customTypes, cardData ->
+                cardsActivityFlow,
+                preferenceManager.includeLastMonthCarry
+            ) { allTypes, customTypes, cardData, includeCarry ->
                 @Suppress("UNCHECKED_CAST")
                 TypesAndCardsBundle(
                     allTypes = allTypes,
@@ -160,11 +165,13 @@ class AccountsViewModel @Inject constructor(
                     allBills = cardData[0] as List<BillWithCard>,
                     cards = cardData[1] as List<CreditCard>,
                     cardTxns = cardData[2] as List<CardTransaction>,
-                    cardPayments = cardData[3] as List<CardPayment>
+                    cardPayments = cardData[3] as List<CardPayment>,
+                    includeLastMonthCarry = includeCarry
                 )
             }
             combine(ledgerFlow, metaFlow) { ledger, meta ->
                 val counted = ledger.summaries.filter { it.account.includeInTotal }
+                val includedAccountIds = counted.map { it.account.id }.toSet()
                 val currentMonthIn = counted.sumOf { it.monthIn }
                 val currentMonthOut = counted.sumOf { it.monthOut }
 
@@ -174,12 +181,21 @@ class AccountsViewModel @Inject constructor(
                 }
                 val prevStart = startOfMonthMillis(prevCal.get(Calendar.YEAR), prevCal.get(Calendar.MONTH))
                 val prevEnd = ms
+                val prevMonthShortLabel = java.text.SimpleDateFormat("MMM", java.util.Locale.US)
+                    .format(prevCal.time)
 
-                val prevTransactions = ledger.transactions.filter { it.occurredAt >= prevStart && it.occurredAt < prevEnd }
+                val prevTransactions = ledger.transactions.filter {
+                    it.occurredAt >= prevStart &&
+                        it.occurredAt < prevEnd &&
+                        it.accountId in includedAccountIds
+                }
                 val prevMonthIn = prevTransactions
                     .filter { TxnCategory.countsAsIncome(it.isExpenseOverride, it.direction) }
                     .sumOf { it.amount }
-                val prevMonthOut = prevTransactions.filter { it.direction == AccountTransaction.DIRECTION_OUT }.sumOf { it.amount }
+                val prevMonthOut = prevTransactions
+                    .filter { it.direction == AccountTransaction.DIRECTION_OUT && it.transferId == null }
+                    .sumOf { it.amount }
+                val lastMonthCarryAmount = prevMonthIn - prevMonthOut
 
                 val assetsTotal = counted.filter { !it.account.isLiability }.sumOf { it.displayBalance }
                 val accountLiabilitiesTotal = counted.filter { it.account.isLiability }.sumOf { kotlin.math.abs(it.displayBalance) }
@@ -225,7 +241,10 @@ class AccountsViewModel @Inject constructor(
                     incomeByCategory = ledger.income.filter { it.total > 0.0 },
                     archivedAccounts = ledger.archivedAccounts,
                     recentTransactions = ledger.transactions,
-                    balanceTrails = ledger.balanceTrails
+                    balanceTrails = ledger.balanceTrails,
+                    includeLastMonthCarry = meta.includeLastMonthCarry,
+                    lastMonthCarryAmount = lastMonthCarryAmount,
+                    prevMonthShortLabel = prevMonthShortLabel
                 )
             }
                 .conflate()

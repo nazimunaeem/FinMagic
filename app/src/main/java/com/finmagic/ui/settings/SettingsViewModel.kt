@@ -153,6 +153,13 @@ class SettingsViewModel @Inject constructor(
     val cashIncomeCategories: StateFlow<List<String>> = preferenceManager.cashIncomeCategories
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val includeLastMonthCarry: StateFlow<Boolean> = preferenceManager.includeLastMonthCarry
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
+    fun setIncludeLastMonthCarry(enabled: Boolean) {
+        viewModelScope.launch { preferenceManager.setIncludeLastMonthCarry(enabled) }
+    }
+
     fun toggleLargeDebitAlerts(enabled: Boolean) {
         viewModelScope.launch { preferenceManager.setLargeDebitAlerts(enabled) }
     }

@@ -75,6 +75,7 @@ import com.finmagic.ui.creditcards.CreditCardsScreen
 import com.finmagic.ui.expenses.ExpensesScreen
 import com.finmagic.ui.home.HomeScreen
 import com.finmagic.ui.navigation.Screen
+import com.finmagic.ui.settings.BackupRestoreScreen
 import com.finmagic.ui.settings.CategoriesScreen
 import com.finmagic.ui.navigation.bottomNavScreens
 import com.finmagic.ui.settings.SettingsScreen
@@ -96,9 +97,12 @@ class MainActivity : ComponentActivity() {
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val allGranted = permissions.values.all { it }
-        if (allGranted) {
+    ) { _ ->
+        val smsGranted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.READ_SMS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (smsGranted) {
             SmsScheduler.schedule(this)
             SmsScheduler.scanStartup(this)
             lifecycleScope.launch {
@@ -170,13 +174,6 @@ class MainActivity : ComponentActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS)
             != PackageManager.PERMISSION_GRANTED) {
             permissions.add(Manifest.permission.READ_SMS)
-        }
-
-        // Needed to read the SIM's phone number so wallet accounts are keyed by
-        // MSISDN (SIM1/SIM2 fallback label when unavailable).
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE)
-            != PackageManager.PERMISSION_GRANTED) {
-            permissions.add(Manifest.permission.READ_PHONE_STATE)
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -391,8 +388,16 @@ fun MainApp(
                         navController.navigate(Screen.ArchivedAccounts.route) {
                             launchSingleTop = true
                         }
+                    },
+                    onNavigateToBackupRestore = {
+                        navController.navigate(Screen.BackupRestore.route) {
+                            launchSingleTop = true
+                        }
                     }
                 )
+            }
+            composable(Screen.BackupRestore.route) {
+                BackupRestoreScreen(onBack = { navController.popBackStack() })
             }
             composable(Screen.Categories.route) {
                 CategoriesScreen(onBack = { navController.popBackStack() })

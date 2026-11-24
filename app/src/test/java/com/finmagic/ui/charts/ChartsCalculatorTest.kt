@@ -312,4 +312,84 @@ class ChartsCalculatorTest {
         assertEquals(true, allocation[2].isLiability)
         assertEquals(3_000.0, allocation[2].amount, 0.01)
     }
+
+    @Test
+    fun computeNetAssetAt_treatsPreAdjustmentAtmCashAsAlreadySpent() {
+        val bank = bankAccount(1L)
+        val cash = bankAccount(2L, kind = Account.KIND_CASH, accountType = "Cash")
+        val accounts = listOf(bank, cash)
+
+        val jan10 = ts(2026, Calendar.JANUARY, 10)
+        val feb10 = ts(2026, Calendar.FEBRUARY, 10)
+        val mar10 = ts(2026, Calendar.MARCH, 10)
+        val mar15Set = ts(2026, Calendar.MARCH, 15, hour = 14)
+        val mar20 = ts(2026, Calendar.MARCH, 20)
+        val now = ts(2026, Calendar.MARCH, 25)
+
+        val txnsByAccount = mapOf(
+            1L to listOf(
+                txn(1, 1L, AccountTransaction.DIRECTION_IN, 300_000.0, ts(2026, Calendar.JANUARY, 1), balanceAfter = 300_000.0),
+                txn(2, 1L, AccountTransaction.DIRECTION_OUT, 50_000.0, jan10, category = TxnCategory.ATM, balanceAfter = 250_000.0, transferId = 10L),
+                txn(3, 1L, AccountTransaction.DIRECTION_OUT, 50_000.0, feb10, category = TxnCategory.ATM, balanceAfter = 200_000.0, transferId = 11L),
+                txn(4, 1L, AccountTransaction.DIRECTION_OUT, 50_000.0, mar10, category = TxnCategory.ATM, balanceAfter = 150_000.0, transferId = 12L)
+            ),
+            2L to listOf(
+                txn(5, 2L, AccountTransaction.DIRECTION_IN, 50_000.0, jan10, category = TxnCategory.RECEIVED, transferId = 10L),
+                txn(6, 2L, AccountTransaction.DIRECTION_IN, 50_000.0, feb10, category = TxnCategory.RECEIVED, transferId = 11L),
+                txn(7, 2L, AccountTransaction.DIRECTION_IN, 50_000.0, mar10, category = TxnCategory.RECEIVED, transferId = 12L),
+                // User sets actual wallet Cash to 6,000 on Mar 15 without adjustment entry
+                txn(8, 2L, AccountTransaction.DIRECTION_OUT, 144_000.0, mar15Set, category = TxnCategory.DIRECT_SET),
+                // Post-setup cash expense of 1,000 on Mar 20
+                txn(9, 2L, AccountTransaction.DIRECTION_OUT, 1_000.0, mar20, category = "Food")
+            )
+        )
+
+        // End of Jan: bank 250,000 + unspent share of Jan ATM (50k * 6k/150k = 2,000) = 252,000 (not 300,000)
+        val (netJan, _, _) = ChartsCalculator.computeNetAssetAt(
+            ChartsCalculator.endOfMonth(2026, Calendar.JANUARY),
+            accounts, txnsByAccount, emptyList(), now
+        )
+        assertEquals(252_000.0, netJan, 0.01)
+
+        // End of Feb: bank 200,000 + 4,000 = 204,000 (not 300,000)
+        val (netFeb, _, _) = ChartsCalculator.computeNetAssetAt(
+            ChartsCalculator.endOfMonth(2026, Calendar.FEBRUARY),
+            accounts, txnsByAccount, emptyList(), now
+        )
+        assertEquals(204_000.0, netFeb, 0.01)
+
+        // Mar 14 (day before DirectSet): bank 150,000 + 6,000 = 156,000
+        val (netMar14, _, _) = ChartsCalculator.computeNetAssetAt(
+            ChartsCalculator.endOfDay(2026, Calendar.MARCH, 14),
+            accounts, txnsByAccount, emptyList(), now
+        )
+        assertEquals(156_000.0, netMar14, 0.01)
+
+        // Mar 25 (after DirectSet and Mar 20 expense): bank 150,000 + (6,000 - 1,000) = 155,000
+        val (netNow, _, _) = ChartsCalculator.computeNetAssetAt(
+            now, accounts, txnsByAccount, emptyList(), now
+        )
+        assertEquals(155_000.0, netNow, 0.01)
+    }
+
+    @Test
+    fun computeNetAssetAt_zeroDirectSetZeroesPreAdjustmentAtmCash() {
+        val cash = bankAccount(1L, kind = Account.KIND_CASH, accountType = "Cash")
+        val accounts = listOf(cash)
+        val jan10 = ts(2026, Calendar.JANUARY, 10)
+        val mar15Set = ts(2026, Calendar.MARCH, 15)
+
+        val txnsByAccount = mapOf(
+            1L to listOf(
+                txn(1, 1L, AccountTransaction.DIRECTION_IN, 80_000.0, jan10, category = TxnCategory.RECEIVED, transferId = 1L),
+                txn(2, 1L, AccountTransaction.DIRECTION_OUT, 80_000.0, mar15Set, category = TxnCategory.DIRECT_SET)
+            )
+        )
+
+        val (netJan, _, _) = ChartsCalculator.computeNetAssetAt(
+            ChartsCalculator.endOfMonth(2026, Calendar.JANUARY),
+            accounts, txnsByAccount, emptyList(), mar15Set
+        )
+        assertEquals(0.0, netJan, 0.01)
+    }
 }
