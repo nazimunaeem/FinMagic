@@ -5,6 +5,23 @@ plugins {
     id("com.google.dagger.hilt.android")
 }
 
+// Release signing is read from environment variables (CI) or Gradle properties (local builds).
+// Never commit the keystore or its passwords: the keystore is decoded from a CI secret.
+val releaseKeystorePath: String? =
+    System.getenv("KEYSTORE_FILE") ?: findProperty("finmagic.keystoreFile")?.toString()
+val releaseStorePassword: String? =
+    System.getenv("KEYSTORE_PASSWORD") ?: findProperty("finmagic.storePassword")?.toString()
+val releaseKeyAlias: String? =
+    System.getenv("KEY_ALIAS") ?: findProperty("finmagic.keyAlias")?.toString()
+val releaseKeyPassword: String? =
+    System.getenv("KEY_PASSWORD") ?: findProperty("finmagic.keyPassword")?.toString()
+
+val hasReleaseSigning = releaseKeystorePath != null &&
+    file(releaseKeystorePath).exists() &&
+    !releaseStorePassword.isNullOrEmpty() &&
+    !releaseKeyAlias.isNullOrEmpty() &&
+    !releaseKeyPassword.isNullOrEmpty()
+
 android {
     namespace = "com.finmagic"
     compileSdk = 37
@@ -24,6 +41,14 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        if (hasReleaseSigning) {
+            create("releaseConfig") {
+                storeFile = file(releaseKeystorePath!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
@@ -38,6 +63,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.findByName("releaseConfig")
         }
     }
 

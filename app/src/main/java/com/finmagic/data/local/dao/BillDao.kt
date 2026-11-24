@@ -71,7 +71,7 @@ interface BillDao {
     fun getOverdueCount(today: String): Flow<Int>
 
     @Query("""
-        SELECT SUM(totalDue) FROM bills
+        SELECT SUM(totalDue - paidAmount) FROM bills
         WHERE isPaid = 0 AND isSuperseded = 0 AND cardId = :cardId
     """)
     fun getUnpaidTotalForCard(cardId: Long): Flow<Double?>

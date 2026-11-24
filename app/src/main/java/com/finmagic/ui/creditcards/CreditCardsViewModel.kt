@@ -186,6 +186,7 @@ data class CardSummaryRow(
     val displayName: String,
     val maskedCard: String,
     val unpaidByCurrency: Map<String, Double>,
+    val paidByCurrency: Map<String, Double>,
     val unpaidBillCount: Int,
     val overdueBillCount: Int
 )
@@ -387,12 +388,10 @@ class CreditCardsViewModel @Inject constructor(
                         }
                     }
 
-                    // Sort unpaid lists: oldest first (ASC due date)
+                    // Sort unpaid bills: least days-to-pay (soonest deadline) on top
+                    // Uses daysUntilDue which naturally handles: overdue (-ve), due soon, upcoming, safe
                     fun sortBills(list: List<BillWithCard>) = list.sortedBy { bill ->
-                        try {
-                            val normalized = com.finmagic.data.sms.BankSmsParser.normalizeDate(bill.dueDate)
-                            sdf.parse(normalized)?.time ?: Long.MAX_VALUE
-                        } catch (_: Exception) { Long.MAX_VALUE }
+                        try { bill.daysUntilDue } catch (_: Exception) { Long.MAX_VALUE }
                     }
 
                     val sortedUnpaid = sortBills(unpaidBills)
@@ -464,6 +463,7 @@ class CreditCardsViewModel @Inject constructor(
                                 displayName = it.card.displayName,
                                 maskedCard = it.card.maskedCard,
                                 unpaidByCurrency = it.unpaidByCurrency,
+                                paidByCurrency = it.paidByCurrency,
                                 unpaidBillCount = it.unpaidBillCount,
                                 overdueBillCount = it.overdueBillCount
                             )
