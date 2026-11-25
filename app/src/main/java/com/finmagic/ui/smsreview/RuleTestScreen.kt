@@ -236,13 +236,13 @@ fun RuleTestScreen(
                     
                     val fields = mutableListOf<String>()
                     result.extractedFields.amount?.let {
-                        fields.add("Amount: Tk ${"%,.2f".format(it)}")
+                        fields.add("Amount: ৳${"%,.2f".format(it)}")
                     }
                     result.extractedFields.date?.let {
                         fields.add("Date: ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(it))}")
                     }
                     result.extractedFields.balance?.let {
-                        fields.add("Balance: Tk ${"%,.2f".format(it)}")
+                        fields.add("Balance: ৳${"%,.2f".format(it)}")
                     }
                     result.extractedFields.accountMask?.let {
                         fields.add("Account: $it")

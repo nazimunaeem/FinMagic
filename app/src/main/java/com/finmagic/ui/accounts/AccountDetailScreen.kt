@@ -144,7 +144,7 @@ fun AccountDetailScreen(
                                 )
                             }
                             Text(
-                                text = String.format(Locale.US, "Tk %,.2f", accountBalance),
+                                text = String.format(Locale.US, "৳%,.2f", accountBalance),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Bold,
                                 color = StatusSafe
@@ -584,7 +584,7 @@ private fun CashEntryDialog(
                         submitCurrent()
                         postedCount += 1
                         val label = if (mode == "EXPENSE") "Expense" else "Income"
-                        lastPostedMessage = "$label Tk ${String.format(Locale.US, "%,.0f", value)} posted"
+                        lastPostedMessage = "$label ৳${String.format(Locale.US, "%,.0f", value)} posted"
                         amountText = ""
                         note = ""
                     },

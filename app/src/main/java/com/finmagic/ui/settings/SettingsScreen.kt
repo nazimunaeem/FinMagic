@@ -350,7 +350,7 @@ fun SettingsScreen(
                 SettingsItem(
                     icon = Icons.Default.Notifications,
                     title = "Large Debit Alerts",
-                    description = "Notify on account debits over Tk %,.0f".format(largeDebitThreshold),
+                    description = "Notify on account debits over ৳%,.0f".format(largeDebitThreshold),
                     trailing = {
                         Switch(
                             checked = largeDebitAlerts,
@@ -374,7 +374,7 @@ fun SettingsScreen(
                         onClick = { showThresholdDialog = true },
                         trailing = {
                             Text(
-                                text = "Tk %,.0f".format(largeDebitThreshold),
+                                text = "৳%,.0f".format(largeDebitThreshold),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.Bold,
@@ -880,7 +880,7 @@ fun ThresholdDialog(
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it },
-                label = { Text("Amount (Tk)") },
+                label = { Text("Amount (৳)") },
                 singleLine = true
             )
         }

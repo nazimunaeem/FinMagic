@@ -956,7 +956,7 @@ internal fun AddEntryDialog(
                             creditItems.forEach { item ->
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     RadioButton(selected = selectedCreditId == item.id, onClick = { selectedCreditId = item.id })
-                                    Text("SMS: Tk ${item.amount} (${dayLabel(item.occurredAt)})", style = MaterialTheme.typography.bodySmall)
+                                    Text("SMS: ৳${item.amount} (${dayLabel(item.occurredAt)})", style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -989,7 +989,7 @@ internal fun AddEntryDialog(
                         val savedAmount = amount
                         submitCurrentEntry()
                         postedCount += 1
-                        lastPostedMessage = "$label Tk ${String.format(Locale.US, "%,.0f", savedAmount)} posted"
+                        lastPostedMessage = "$label ৳${String.format(Locale.US, "%,.0f", savedAmount)} posted"
                         amountText = ""
                         note = ""
                         selectedCreditId = null
@@ -1258,7 +1258,7 @@ internal fun ExpenseBreakdownCard(
                 Column(horizontalAlignment = Alignment.End) {
                     if (totalIn > 0) {
                         Text(
-                            text = String.format(Locale.US, "+ Tk %,.2f", totalIn),
+                            text = String.format(Locale.US, "+৳%,.2f", totalIn),
                             style = MaterialTheme.typography.titleMedium,
                             color = StatusSafe,
                             fontWeight = FontWeight.Bold
@@ -1266,7 +1266,7 @@ internal fun ExpenseBreakdownCard(
                     }
                     if (totalOut > 0) {
                         Text(
-                            text = String.format(Locale.US, "− Tk %,.2f", totalOut),
+                            text = String.format(Locale.US, "−৳%,.2f", totalOut),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.error,
                             fontWeight = FontWeight.Bold
@@ -1356,7 +1356,7 @@ private fun BreakdownBar(
                 modifier = Modifier.weight(1f)
             )
             Text(
-                text = String.format(Locale.US, "Tk %,.2f", total),
+                text = String.format(Locale.US, "৳%,.2f", total),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold
             )
@@ -1382,7 +1382,7 @@ fun accountIcon(kind: String): ImageVector = when (kind) {
 
 internal fun formatTkAmount(amount: Double): String {
     val absVal = kotlin.math.abs(amount)
-    return String.format(Locale.US, "Tk %,.2f", absVal)
+    return String.format(Locale.US, "৳%,.2f", absVal)
 }
 
 @Composable
@@ -1488,7 +1488,7 @@ private fun CardsLiabilitySummaryCard(
                     }
                 }
                 Text(
-                    text = String.format(Locale.US, "−Tk %,.2f", cardTotal),
+                    text = String.format(Locale.US, "−৳%,.2f", cardTotal),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.error,
@@ -1516,7 +1516,7 @@ private fun CardsLiabilitySummaryCard(
                                 text = when {
                                     item.unpaidBillCount > 0 -> String.format(
                                         Locale.US,
-                                        "%d unpaid bill%s · Bill Tk %,.2f",
+                                        "%d unpaid bill%s · Bill ৳%,.2f",
                                         item.unpaidBillCount,
                                         if (item.unpaidBillCount == 1) "" else "s",
                                         item.unpaidBillAmount
@@ -1529,7 +1529,7 @@ private fun CardsLiabilitySummaryCard(
                             )
                         }
                         Text(
-                            text = String.format(Locale.US, "Tk %,.2f", item.unpaidAmount),
+                            text = String.format(Locale.US, "৳%,.2f", item.unpaidAmount),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold,
                             color = if (item.unpaidAmount > 0.0) MaterialTheme.colorScheme.error else StatusSafe

@@ -73,7 +73,7 @@ import java.util.Locale
 
 private fun formatTrailBalance(amount: Double): String {
     val sign = if (amount < 0) "−" else ""
-    return "${sign}Tk ${String.format(Locale.US, "%,.2f", kotlin.math.abs(amount))}"
+    return "${sign}৳${String.format(Locale.US, "%,.2f", kotlin.math.abs(amount))}"
 }
 
 @Composable
@@ -92,11 +92,9 @@ fun TxnRow(
     val amountColor = if (isIn) StatusSafe else MaterialTheme.colorScheme.error
     val displayCategory = categoryLabel(txn.category, categoryNicknames)
 
-    val hasTrail = balanceTrail != null
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (hasTrail) Modifier.defaultMinSize(minHeight = 78.dp) else Modifier)
             .then(if (onTap != null) Modifier.clickable(onClick = onTap) else Modifier),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
@@ -104,16 +102,12 @@ fun TxnRow(
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = if (hasTrail) 10.dp else 6.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
                 Column(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -198,14 +192,47 @@ fun TxnRow(
                         }
                     }
                 }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = (if (isIn) "+" else "−") + String.format(Locale.US, "Tk %,.2f", txn.amount),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = amountColor
-                    )
-                    if (balanceTrail == null) {
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                ) {
+                    if (balanceTrail != null) {
+                        val afterColor = if (balanceTrail.after < 0) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        }
+                        Text(
+                            text = formatTrailBalance(balanceTrail.after),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 11.sp,
+                                lineHeight = 14.sp
+                            ),
+                            fontWeight = FontWeight.SemiBold,
+                            color = afterColor,
+                            modifier = Modifier.testTag("txn_balance_trail_${txn.id}")
+                        )
+                        Text(
+                            text = (if (isIn) "+" else "−") + String.format(Locale.US, "৳%,.2f", txn.amount),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = amountColor
+                        )
+                        Text(
+                            text = formatTrailBalance(balanceTrail.before),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 11.sp,
+                                lineHeight = 14.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            text = (if (isIn) "+" else "−") + String.format(Locale.US, "৳%,.2f", txn.amount),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = amountColor
+                        )
                         runningBalance?.let { balance ->
                             Text(
                                 text = formatTrailBalance(balance),
@@ -216,36 +243,7 @@ fun TxnRow(
                     }
                 }
             }
-
-            if (balanceTrail != null) {
-                HorizontalDivider(
-                    thickness = 0.5.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
-                )
-                val mutedColor = MaterialTheme.colorScheme.onSurfaceVariant
-                val afterColor = if (balanceTrail.after < 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                val trailLabel = if (!accountName.isNullOrBlank()) "$accountName bal" else "Balance"
-                val trailText = buildAnnotatedString {
-                    withStyle(SpanStyle(color = mutedColor)) {
-                        append("$trailLabel: ${formatTrailBalance(balanceTrail.before)} → ")
-                    }
-                    withStyle(SpanStyle(color = afterColor, fontWeight = FontWeight.SemiBold)) {
-                        append(formatTrailBalance(balanceTrail.after))
-                    }
-                }
-                Text(
-                    text = trailText,
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontSize = 11.sp,
-                        lineHeight = 14.sp
-                    ),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.testTag("txn_balance_trail_${txn.id}")
-                )
-            }
         }
-    }
 
     if (showCategoryDialog && onUpdateCategory != null) {
         EditCategoryDialog(
@@ -297,7 +295,7 @@ fun EditTransactionDetailsDialog(
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { amountText = it },
-                    label = { Text("Amount (Tk)") },
+                    label = { Text("Amount (৳)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
@@ -503,14 +501,14 @@ fun AdjustCashBalanceDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "Current: Tk ${String.format(Locale.US, "%,.2f", currentBalance)}",
+                    text = "Current: ৳${String.format(Locale.US, "%,.2f", currentBalance)}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 OutlinedTextField(
                     value = targetText,
                     onValueChange = { targetText = it },
-                    label = { Text("New Balance (Tk)") },
+                    label = { Text("New Balance (৳)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
@@ -519,7 +517,7 @@ fun AdjustCashBalanceDialog(
                     val sign = if (diff > 0) "+" else "−"
                     val color = if (diff > 0) StatusSafe else MaterialTheme.colorScheme.error
                     Text(
-                        text = "Change: $sign Tk ${String.format(Locale.US, "%,.2f", kotlin.math.abs(diff))}",
+                        text = "Change: ${sign}৳${String.format(Locale.US, "%,.2f", kotlin.math.abs(diff))}",
                         style = MaterialTheme.typography.bodySmall,
                         color = color
                     )
@@ -627,7 +625,7 @@ fun TxnDetailDialog(
                             )
                             Text(
                                 text = (if (isIn) "+" else "−") +
-                                    String.format(Locale.US, "Tk %,.2f", txn.amount),
+                                    String.format(Locale.US, "৳%,.2f", txn.amount),
                                 style = MaterialTheme.typography.headlineMedium,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = amountColor
@@ -655,7 +653,7 @@ fun TxnDetailDialog(
                 txn.balanceAfter?.let {
                     DetailItem(
                         label = "Running Balance",
-                        value = "Tk ${String.format(Locale.US, "%,.2f", it)}",
+                        value = "৳${String.format(Locale.US, "%,.2f", it)}",
                         valueColor = StatusSafe
                     )
                 }
@@ -1021,7 +1019,7 @@ fun AddAccountDialog(
                 OutlinedTextField(
                     value = balanceText,
                     onValueChange = { balanceText = it },
-                    label = { Text(if (isLiability) "Outstanding Balance (Tk)" else "Current Balance (Tk)") },
+                    label = { Text(if (isLiability) "Outstanding Balance (৳)" else "Current Balance (৳)") },
                     placeholder = { Text("0.00") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -1280,7 +1278,7 @@ fun CorrectTransactionDialog(
                     label = { Text("Amount") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    prefix = { Text("Tk ") }
+                    prefix = { Text("৳") }
                 )
 
                 OutlinedTextField(
@@ -1289,7 +1287,7 @@ fun CorrectTransactionDialog(
                     label = { Text("Reported Balance (optional)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    prefix = { Text("Tk ") }
+                    prefix = { Text("৳") }
                 )
 
                 if (detectedBalances.isNotEmpty()) {
@@ -1305,7 +1303,7 @@ fun CorrectTransactionDialog(
                         detectedBalances.forEach { bal ->
                             AssistChip(
                                 onClick = { balanceText = "%,.2f".format(bal) },
-                                label = { Text("Tk %,.2f".format(bal)) }
+                                label = { Text("৳%,.2f".format(bal)) }
                             )
                         }
                     }

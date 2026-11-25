@@ -63,7 +63,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-private val bdtFormat = { amount: Double -> "Tk ${String.format(Locale.US, "%,.2f", amount)}" }
+private val bdtFormat = { amount: Double -> "৳${String.format(Locale.US, "%,.2f", amount)}" }
 private val dayFormat = SimpleDateFormat("dd MMM", Locale.US)
 private val dateTimeFormat = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US)
 private val monthName = { m: Int ->

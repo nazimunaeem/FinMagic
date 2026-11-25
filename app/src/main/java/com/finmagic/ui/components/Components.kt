@@ -445,6 +445,11 @@ fun EditBillDialog(
     var minText by remember { mutableStateOf(minDue.toString()) }
     var dueText by remember { mutableStateOf(dueDate) }
 
+    val symbol = when (currency.uppercase()) {
+        "USD" -> "$"
+        "BDT", "TK" -> "৳"
+        else -> currency
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit Bill") },
@@ -456,7 +461,7 @@ fun EditBillDialog(
                 OutlinedTextField(
                     value = totalText,
                     onValueChange = { totalText = it },
-                    label = { Text("Total Due ($currency)") },
+                    label = { Text("Total Due ($symbol)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
@@ -464,7 +469,7 @@ fun EditBillDialog(
                 OutlinedTextField(
                     value = minText,
                     onValueChange = { minText = it },
-                    label = { Text("Minimum Due ($currency)") },
+                    label = { Text("Minimum Due ($symbol)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
@@ -519,6 +524,12 @@ fun PaymentAmountDialog(
 ) {
     var amountText by remember { mutableStateOf(if (currentPaid > 0) currentPaid.toString() else "") }
 
+    val symbol = when (currency.uppercase()) {
+        "USD" -> "$"
+        "BDT", "TK" -> "৳"
+        else -> currency
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Update Paid Amount") },
@@ -527,8 +538,8 @@ fun PaymentAmountDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("Total: ${currency} $totalDue", style = MaterialTheme.typography.bodySmall)
-                Text("Minimum: ${currency} $minDue", style = MaterialTheme.typography.bodySmall)
+                Text("Total: $symbol${String.format(java.util.Locale.US, "%,.2f", totalDue)}", style = MaterialTheme.typography.bodySmall)
+                Text("Minimum: $symbol${String.format(java.util.Locale.US, "%,.2f", minDue)}", style = MaterialTheme.typography.bodySmall)
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = amountText,

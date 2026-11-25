@@ -854,7 +854,7 @@ private val PORTAL_HTML: String = """
           <select id="q-acct" required></select>
         </div>
         <div class="field">
-          <label>Amount (Tk)</label>
+          <label>Amount (৳)</label>
           <input id="q-amt" type="number" step="0.01" min="0.01" placeholder="0.00" required />
         </div>
         <div class="field">
@@ -883,7 +883,7 @@ private val PORTAL_HTML: String = """
           <select id="t-to" required></select>
         </div>
         <div class="field">
-          <label>Amount (Tk)</label>
+          <label>Amount (৳)</label>
           <input id="t-amt" type="number" step="0.01" min="0.01" placeholder="0.00" required />
         </div>
         <div class="field">
@@ -1756,9 +1756,9 @@ function openEditCardModal(id) {
     '<div class="muted">' + esc(c.bankName) + ' •••• ' + esc(c.cardLast4) + '</div>' +
     '<form class="list" style="gap:10px" onsubmit="saveEditCard(event,' + id + ',' + Number(c.outstanding || 0) + ')">' +
       '<div class="field"><label>Nickname</label><input id="m-ec-nick" value="' + esc(c.cardNickname || '') + '" /></div>' +
-      '<div class="field"><label>Current Outstanding (' + esc(c.currency || 'BDT') + ')</label><input id="m-ec-out" type="number" step="0.01" min="0" value="' + Number(c.outstanding || 0).toFixed(2) + '" /></div>' +
+      '<div class="field"><label>Current Outstanding (' + (c.currency === 'USD' ? '$' : '৳') + ')</label><input id="m-ec-out" type="number" step="0.01" min="0" value="' + Number(c.outstanding || 0).toFixed(2) + '" /></div>' +
       '<div class="field"><label>Credit Limit</label><input id="m-ec-limit" type="number" step="0.01" min="0" value="' + Number(c.creditLimit || 0) + '" /></div>' +
-      '<div class="field"><label>Currency</label><select id="m-ec-cur"><option value="BDT"' + (c.currency !== 'USD' ? ' selected' : '') + '>BDT</option><option value="USD"' + (c.currency === 'USD' ? ' selected' : '') + '>USD</option></select></div>' +
+      '<div class="field"><label>Currency</label><select id="m-ec-cur"><option value="BDT"' + (c.currency !== 'USD' ? ' selected' : '') + '>৳ BDT</option><option value="USD"' + (c.currency === 'USD' ? ' selected' : '') + '>$ USD</option></select></div>' +
       '<div class="modal-actions">' +
         (c.hasOutstandingAnchor ? '<button type="button" class="btn sec" onclick="resetCardOutstanding(' + id + ')">Reset Auto</button>' : '') +
         '<button type="button" class="btn sec" onclick="closeModal()">Cancel</button>' +

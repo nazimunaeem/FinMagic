@@ -373,11 +373,11 @@ fun TeachSmsSheet(
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     val highlights = buildList {
-                        extracted.amount?.let { add("Amount: Tk ${"%,.2f".format(it)}") }
+                        extracted.amount?.let { add("Amount: ৳${"%,.2f".format(it)}") }
                         extracted.date?.let {
                             add("Date: ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(it))}")
                         }
-                        extracted.balance?.let { add("Balance: Tk ${"%,.2f".format(it)}") }
+                        extracted.balance?.let { add("Balance: ৳${"%,.2f".format(it)}") }
                         extracted.accountMask?.let { add("Account: $it") }
                         extracted.counterparty?.let { add("From: $it") }
                     }
@@ -569,7 +569,7 @@ fun TeachSmsSheet(
                         label = { Text("Minimum Due (optional)") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
-                        prefix = { Text("Tk ") },
+                        prefix = { Text("৳") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                     )
                 }
@@ -652,7 +652,7 @@ fun TeachSmsSheet(
                     label = { Text("Amount") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    prefix = { Text("Tk ") },
+                    prefix = { Text("৳") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     isError = amountText.isNotBlank() && (amount == null || amount <= 0)
                 )
@@ -715,7 +715,7 @@ fun TeachSmsSheet(
                     label = { Text("Reported Balance (optional)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    prefix = { Text("Tk ") },
+                    prefix = { Text("৳") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                 )
 
@@ -828,16 +828,16 @@ fun TeachSmsSheet(
                     val amountTextPreview = amountText.ifBlank { "—" }
                     val dateTextPreview = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date(selectedDate))
                     val balancePreview = if (selectedAction == TeachAction.BALANCE_ONLY) balanceText.ifBlank { "—" } else balanceText.ifBlank { "No balance" }
-                    "$target • Tk $amountTextPreview • $dateTextPreview • Balance: $balancePreview"
+                    "$target • ৳$amountTextPreview • $dateTextPreview • Balance: $balancePreview"
                 }
                 TeachAction.TRANSFER -> {
                     val from = fromAccountId?.let { id -> accounts.firstOrNull { it.id == id }?.displayName ?: "Selected account" } ?: "Select from account"
                     val to = toAccountId?.let { id -> accounts.firstOrNull { it.id == id }?.displayName ?: "Select to account" } ?: "Select to account"
-                    "$from → $to • Tk ${amountText.ifBlank { "—" }} • ${SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date(selectedDate))}"
+                    "$from → $to • ৳${amountText.ifBlank { "—" }} • ${SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date(selectedDate))}"
                 }
                 TeachAction.BILL, TeachAction.BILL_PAID -> {
                     val card = selectedCardId?.let { id -> creditCards.firstOrNull { it.id == id }?.displayName ?: "Selected card" } ?: "Select a card"
-                    "$card • Tk ${amountText.ifBlank { "—" }} • ${SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date(selectedDate))}"
+                    "$card • ৳${amountText.ifBlank { "—" }} • ${SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date(selectedDate))}"
                 }
                 TeachAction.IGNORE -> "This SMS will be marked as ignored and hidden from review."
             }

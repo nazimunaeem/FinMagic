@@ -59,11 +59,11 @@ internal fun formatCompactTk(amount: Double): String {
     val sign = if (amount < -0.005) "−" else ""
     val v = abs(amount)
     return when {
-        v >= 10_000_000 -> "${sign}Tk ${String.format(Locale.US, "%.1fM", v / 1_000_000.0)}"
-        v >= 1_000_000 -> "${sign}Tk ${String.format(Locale.US, "%.2fM", v / 1_000_000.0)}"
-        v >= 10_000 -> "${sign}Tk ${String.format(Locale.US, "%.1fk", v / 1_000.0)}"
-        v >= 1_000 -> "${sign}Tk ${String.format(Locale.US, "%.1fk", v / 1_000.0)}"
-        else -> "${sign}Tk ${String.format(Locale.US, "%.0f", v)}"
+        v >= 10_000_000 -> "${sign}৳${String.format(Locale.US, "%.1fM", v / 1_000_000.0)}"
+        v >= 1_000_000 -> "${sign}৳${String.format(Locale.US, "%.2fM", v / 1_000_000.0)}"
+        v >= 10_000 -> "${sign}৳${String.format(Locale.US, "%.1fk", v / 1_000.0)}"
+        v >= 1_000 -> "${sign}৳${String.format(Locale.US, "%.1fk", v / 1_000.0)}"
+        else -> "${sign}৳${String.format(Locale.US, "%.0f", v)}"
     }
 }
 
@@ -72,9 +72,9 @@ internal fun formatExactTk(amount: Double): String {
     val v = abs(amount)
     val hasCents = abs(v - kotlin.math.round(v)) >= 0.005
     return if (hasCents) {
-        "${sign}Tk ${String.format(Locale.US, "%,.2f", v)}"
+        "${sign}৳${String.format(Locale.US, "%,.2f", v)}"
     } else {
-        "${sign}Tk ${String.format(Locale.US, "%,.0f", v)}"
+        "${sign}৳${String.format(Locale.US, "%,.0f", v)}"
     }
 }
 

@@ -459,7 +459,7 @@ private fun MyAccountRow(
                 }
             }
             Text(
-                text = String.format(Locale.US, "Tk %,.2f", summary.displayBalance),
+                text = String.format(Locale.US, "৳%,.2f", summary.displayBalance),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = StatusSafe

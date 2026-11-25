@@ -102,7 +102,7 @@ object NotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val formatted = "Tk %,.2f".format(amount)
+        val formatted = "৳%,.2f".format(amount)
         val title = "Large debit: $formatted"
         val text = "$institution ••$accountMask" + (counterparty?.let { " — $it" } ?: "")
 
