@@ -233,7 +233,15 @@ class CardRepository @Inject constructor(
             val activeBillsAtCutoff = if (asOfMillis >= todayStart) {
                 cardBills.filter { !it.isSuperseded }
             } else {
-                cardBills.filter { !it.isSuperseded && it.detectedAt <= asOfMillis }
+                // Historical statements carry forward unpaid balances into the next statement,
+                // so keep at most the latest non-superseded bill per currency as of cutoff.
+                cardBills
+                    .filter { !it.isSuperseded && it.detectedAt <= asOfMillis }
+                    .groupBy { it.currency.ifBlank { "BDT" }.uppercase(Locale.US) }
+                    .values
+                    .mapNotNull { group ->
+                        group.maxWithOrNull(compareBy<BillWithCard>({ it.detectedAt }, { it.billId }))
+                    }
             }
 
             val unpaidBillRemaining = if (asOfMillis >= todayStart) {
@@ -255,6 +263,23 @@ class CardRepository @Inject constructor(
 
             val latestStatementAt = activeBillsAtCutoff.maxOfOrNull { it.detectedAt } ?: 0L
             if (latestStatementAt <= 0L) {
+                if (anchor != null && asOfMillis < card.outstandingAnchorAt) {
+                    val spendBetween = allCardTxns
+                        .filter {
+                            it.occurredAt > asOfMillis &&
+                                it.occurredAt <= card.outstandingAnchorAt &&
+                                cardTransactionBelongsTo(it, card)
+                        }
+                        .sumOf { it.amount }
+                    val smsPaidBetween = allPayments
+                        .filter {
+                            it.paidAt > asOfMillis &&
+                                it.paidAt <= card.outstandingAnchorAt &&
+                                cardPaymentBelongsTo(it, card)
+                        }
+                        .sumOf { it.amountBdt }
+                    return max(0.0, anchor - spendBetween + smsPaidBetween)
+                }
                 val totalSpend = cardTxns.sumOf { it.amount }
                 val totalPaid = cardPayments.sumOf { it.amountBdt }
                 return max(0.0, totalSpend - totalPaid)

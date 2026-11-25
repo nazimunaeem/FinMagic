@@ -119,8 +119,7 @@ object ChartsCalculator {
             val balance = if (account.kind == Account.KIND_CASH) {
                 computeCashBalanceAt(cutoffMillis, allTxns)
             } else {
-                val txnsUpToCutoff = allTxns.filter { it.occurredAt <= cutoffMillis }
-                AccountRepository.computeAccountBalance(txnsUpToCutoff)
+                computeNonCashAccountBalanceAt(cutoffMillis, account, allTxns)
             }
             if (account.isLiability) {
                 accountLiabilities += abs(balance)
@@ -156,7 +155,13 @@ object ChartsCalculator {
             orphanBills.filter { !it.isPaid && !it.isSuperseded }
                 .sumOf { max(0.0, it.totalDue - it.paidAmount) }
         } else {
-            orphanBills.filter { !it.isSuperseded && it.detectedAt <= cutoffMillis }
+            orphanBills
+                .filter { !it.isSuperseded && it.detectedAt <= cutoffMillis }
+                .groupBy { it.cardId to it.currency.ifBlank { "BDT" }.uppercase(Locale.US) }
+                .values
+                .mapNotNull { group ->
+                    group.maxWithOrNull(compareBy<BillWithCard>({ it.detectedAt }, { it.billId }))
+                }
                 .sumOf { bill ->
                     val paidAt = bill.paidAt
                     when {
@@ -173,6 +178,45 @@ object ChartsCalculator {
         val totalLiabilities = accountLiabilities + knownCardOutstanding + orphanCardLiabilities
         val netAsset = assets - totalLiabilities
         return Triple(netAsset, assets, totalLiabilities)
+    }
+
+    internal fun computeNonCashAccountBalanceAt(
+        cutoffMillis: Long,
+        account: Account,
+        allTxns: List<AccountTransaction>
+    ): Double {
+        if (allTxns.isEmpty()) return 0.0
+        val sortedAll = allTxns.sortedWith(compareBy({ it.occurredAt }, { it.id }))
+        val upToCutoff = sortedAll.filter { it.occurredAt <= cutoffMillis }
+        val realTxns = sortedAll.filter { it.category != TxnCategory.DIRECT_SET }
+        val hasRealAnchor = realTxns.any { it.balanceAfter != null }
+
+        if (upToCutoff.isEmpty()) {
+            // Before the earliest SMS in the inbox, an SMS with a known balanceAfter
+            // implies the account already held `before` prior to that transaction.
+            if (!account.isLiability && hasRealAnchor && sortedAll.first().category != TxnCategory.DIRECT_SET) {
+                val trails = AccountRepository.computeBalanceTrails(realTxns)
+                val firstReal = realTxns.firstOrNull()
+                if (firstReal != null) {
+                    return max(0.0, trails[firstReal.id]?.before ?: 0.0)
+                }
+            }
+            return 0.0
+        }
+
+        // Run balance trails on the full timeline so later SMS balanceAfter anchors
+        // backfill earlier unanchored debits/credits instead of dropping to negative.
+        val trails = AccountRepository.computeBalanceTrails(sortedAll)
+        val lastAtCutoff = upToCutoff.last()
+        val balance = trails[lastAtCutoff.id]?.after ?: AccountRepository.computeAccountBalance(upToCutoff)
+        val hasFutureDirectSet = sortedAll.any {
+            it.category == TxnCategory.DIRECT_SET && it.occurredAt > cutoffMillis
+        }
+        return if (!account.isLiability && !hasRealAnchor && hasFutureDirectSet) {
+            max(0.0, balance)
+        } else {
+            balance
+        }
     }
 
     internal fun computeCashBalanceAt(

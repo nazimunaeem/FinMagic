@@ -193,4 +193,44 @@ class CardOutstandingTest {
         )
         assertEquals(20_000.0, afterSmsPay, 0.01)
     }
+
+    @Test
+    fun historicalCutoffDoesNotStackMultiplePriorBillsOrInflateUnbilledAnchoredCard() {
+        val now = ts(2026, Calendar.NOVEMBER, 24)
+        val octCutoff = ts(2026, Calendar.OCTOBER, 31, hour = 23)
+
+        // Two prior bills marked paid on Nov 24 during first-time setup
+        val cWithBills = card(id = 1L)
+        val bills = listOf(
+            bill(id = 1L, totalDue = 30_000.0, paidAmount = 30_000.0, isPaid = true, detectedAt = ts(2026, Calendar.SEPTEMBER, 5), paidAt = now),
+            bill(id = 2L, totalDue = 45_000.0, paidAmount = 45_000.0, isPaid = true, detectedAt = ts(2026, Calendar.OCTOBER, 5), paidAt = now)
+        )
+        val octOutstanding = CardRepository.computeCardOutstanding(
+            card = cWithBills,
+            cardBills = bills,
+            allCardTxns = emptyList(),
+            allPayments = emptyList(),
+            asOfMillis = octCutoff,
+            nowMillis = now
+        )
+        // Must count only the latest Oct statement (45,000), not Sep + Oct (75,000)
+        assertEquals(45_000.0, octOutstanding, 0.01)
+
+        // Card without statement bills whose outstanding was anchored at 10,000 on Nov 24
+        val cAnchoredNoBills = card(id = 2L, anchor = 10_000.0, anchorAt = now)
+        val txns = listOf(
+            spend(1L, 50_000.0, ts(2026, Calendar.OCTOBER, 15)),
+            spend(2L, 8_000.0, ts(2026, Calendar.NOVEMBER, 10))
+        )
+        val octNoBills = CardRepository.computeCardOutstanding(
+            card = cAnchoredNoBills,
+            cardBills = emptyList(),
+            allCardTxns = txns,
+            allPayments = emptyList(),
+            asOfMillis = octCutoff,
+            nowMillis = now
+        )
+        // 10,000 anchor - 8,000 Nov spend = 2,000 at Oct 31 (instead of 50,000)
+        assertEquals(2_000.0, octNoBills, 0.01)
+    }
 }

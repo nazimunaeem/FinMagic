@@ -5,6 +5,7 @@ import com.finmagic.data.local.entity.Account
 import com.finmagic.data.local.entity.AccountTransaction
 import com.finmagic.data.local.entity.BillWithCard
 import com.finmagic.data.local.entity.CardTransaction
+import com.finmagic.data.local.entity.CreditCard
 import com.finmagic.data.sms.parsers.TxnCategory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -391,5 +392,36 @@ class ChartsCalculatorTest {
             accounts, txnsByAccount, emptyList(), mar15Set
         )
         assertEquals(0.0, netJan, 0.01)
+    }
+
+    @Test
+    fun computeNetAssetAt_backfillsPreAnchorBankBalanceAndPreWindowBalance() {
+        val bank1 = bankAccount(1L)
+        val bank2 = bankAccount(2L)
+        val accounts = listOf(bank1, bank2)
+
+        val feb10 = ts(2026, Calendar.FEBRUARY, 10)
+        val mar5 = ts(2026, Calendar.MARCH, 5)
+        val now = ts(2026, Calendar.MARCH, 20)
+
+        val txnsByAccount = mapOf(
+            // Bank 1 had an unanchored withdrawal in Feb, then an SMS with balanceAfter in Mar
+            1L to listOf(
+                txn(1, 1L, AccountTransaction.DIRECTION_OUT, 5_000.0, feb10, balanceAfter = null),
+                txn(2, 1L, AccountTransaction.DIRECTION_IN, 20_000.0, mar5, balanceAfter = 80_000.0)
+            ),
+            // Bank 2's earliest SMS arrived in Mar with balanceAfter showing 40,000 existed before Mar 5
+            2L to listOf(
+                txn(3, 2L, AccountTransaction.DIRECTION_OUT, 2_000.0, mar5, balanceAfter = 38_000.0)
+            )
+        )
+
+        val (netFeb, assetsFeb, _) = ChartsCalculator.computeNetAssetAt(
+            ChartsCalculator.endOfMonth(2026, Calendar.FEBRUARY),
+            accounts, txnsByAccount, emptyList(), now
+        )
+        // Bank 1 at end of Feb = 60,000 (backfilled from Mar 5 80k - 20k); Bank 2 before Mar 5 = 40,000
+        assertEquals(100_000.0, assetsFeb, 0.01)
+        assertEquals(100_000.0, netFeb, 0.01)
     }
 }

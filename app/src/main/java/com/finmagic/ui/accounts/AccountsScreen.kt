@@ -1110,39 +1110,15 @@ internal fun TotalBalanceHeader(
                 )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom
-            ) {
-                val balancePrefix = if (totalBalance < -0.005) "−" else ""
-                Text(
-                    text = balancePrefix + formatBdtAmount(totalBalance, forceCents = true),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = if (totalBalance < -0.005) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (hasCarry) {
-                    val carryPrefix = if (lastMonthCarryAmount >= 0) "+" else "−"
-                    val carrySource = if (prevMonthShortLabel.isNotBlank()) "Carry ($prevMonthShortLabel)" else "Carry"
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f)
-                    ) {
-                        Text(
-                            text = "$carrySource $carryPrefix${formatBdtAmount(lastMonthCarryAmount)}",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (lastMonthCarryAmount >= 0) StatusSafe else MaterialTheme.colorScheme.error,
-                            modifier = Modifier
-                                .padding(horizontal = 7.dp, vertical = 2.dp)
-                                .testTag("net_worth_carry_badge")
-                        )
-                    }
-                }
-            }
+            val balancePrefix = if (totalBalance < -0.005) "−" else ""
+            Text(
+                text = balancePrefix + formatBdtAmount(totalBalance, forceCents = true),
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (totalBalance < -0.005) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
 
             if (assetsTotal != 0.0 || liabilitiesTotal > 0.0) {
                 Row(
@@ -1175,46 +1151,143 @@ internal fun TotalBalanceHeader(
                 shape = RoundedCornerShape(10.dp),
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.48f)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 7.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val netPrefix = if (net < -0.005) "−" else ""
-                    Text(
-                        text = "↓ In ${String.format(Locale.US, "৳%,.0f", effectiveIn)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = StatusSafe,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text(
-                        text = "↑ Out ${String.format(Locale.US, "৳%,.0f", effectiveOut)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.error,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text(
-                        text = "Net $netPrefix${String.format(Locale.US, "৳%,.0f", kotlin.math.abs(net))}",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (net >= 0) StatusSafe else MaterialTheme.colorScheme.error,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.End,
-                        modifier = Modifier.weight(1f)
-                    )
+                val netPrefix = if (net < -0.005) "−" else ""
+                val netText = "Net $netPrefix${formatBdtAmount(net, forceCents = false)}"
+                val positiveCarry = hasCarry && lastMonthCarryAmount > 0.0
+                val negativeCarry = hasCarry && lastMonthCarryAmount < 0.0
+                val inText = if (positiveCarry) {
+                    "↓ In ${formatBdtAmount(monthIn, forceCents = false)} + ${formatBdtAmount(lastMonthCarryAmount, forceCents = false)} (carry)"
+                } else {
+                    "↓ In ${formatBdtAmount(monthIn, forceCents = false)}"
+                }
+                val outText = if (negativeCarry) {
+                    "↑ Out ${formatBdtAmount(monthOut, forceCents = false)} + ${formatBdtAmount(-lastMonthCarryAmount, forceCents = false)} (carry)"
+                } else {
+                    "↑ Out ${formatBdtAmount(monthOut, forceCents = false)}"
+                }
+
+                if (hasCarry) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        if (positiveCarry) {
+                            Text(
+                                text = inText,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = StatusSafe,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("net_worth_carry_inline")
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = outText,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.error,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = netText,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (net >= 0) StatusSafe else MaterialTheme.colorScheme.error,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = outText,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("net_worth_carry_inline")
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = inText,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = StatusSafe,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = netText,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (net >= 0) StatusSafe else MaterialTheme.colorScheme.error,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = inText,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = StatusSafe,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = outText,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = netText,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (net >= 0) StatusSafe else MaterialTheme.colorScheme.error,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.End,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
             }
         }
